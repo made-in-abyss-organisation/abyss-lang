@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "codegen.h"
 #include "interp.h"
 #include "lexer.h"
 #include "parser.h"
@@ -52,16 +53,17 @@ static void dump_tokens(const char *source) {
 
 int main(int argc, char *argv[]) {
     const char *path = NULL;
-    int mode_tokens = 0, mode_ast = 0, no_check = 0;
+    int mode_tokens = 0, mode_ast = 0, mode_emit_c = 0, no_check = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--tokens") == 0) mode_tokens = 1;
         else if (strcmp(argv[i], "--ast") == 0) mode_ast = 1;
+        else if (strcmp(argv[i], "--emit-c") == 0) mode_emit_c = 1;
         else if (strcmp(argv[i], "--no-check") == 0) no_check = 1;
         else path = argv[i];
     }
     if (!path) {
-        fprintf(stderr, "usage: abyssc [--ast|--tokens|--no-check] <file.aby>\n");
+        fprintf(stderr, "usage: abyssc [--ast|--tokens|--emit-c|--no-check] <file.aby>\n");
         return 64;
     }
 
@@ -94,6 +96,15 @@ int main(int argc, char *argv[]) {
             free(source);
             return 65;
         }
+    }
+
+    if (mode_emit_c) {
+        int unsupported = emit_c(program, stdout);
+        if (unsupported > 0)
+            fprintf(stderr, "abyssc: warning: %d construct(s) not yet supported by "
+                            "the C backend (emitted as nil)\n", unsupported);
+        free(source);
+        return 0;
     }
 
     int code = interpret(program);

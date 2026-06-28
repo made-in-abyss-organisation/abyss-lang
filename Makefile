@@ -5,7 +5,7 @@ SRC     := $(wildcard src/*.c)
 OBJ     := $(SRC:.c=.o)
 BIN     := abyssc
 
-.PHONY: all clean run
+.PHONY: all clean run native
 
 all: $(BIN)
 
@@ -17,6 +17,13 @@ src/%.o: src/%.c
 
 run: $(BIN)
 	./$(BIN) examples/run_demo.aby
+
+# transpile an example to C, compile it natively, and run the binary
+native: $(BIN)
+	@mkdir -p build
+	./$(BIN) --emit-c examples/run_demo.aby > build/run_demo.c
+	$(CC) -O2 build/run_demo.c -o build/run_demo
+	./build/run_demo
 
 clean:
 	rm -f $(OBJ) $(BIN)

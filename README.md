@@ -34,25 +34,32 @@ component Counter {
 
 ## Status
 
-🚧 **Phase 3 — Type-checked & running.** Programs are **statically type-checked
-before they run** (`Int + String`, wrong arg/field counts, non-`Bool`
-conditions, unknown fields, return-type mismatches, undefined names — all caught
-with line numbers; use `--no-check` to skip). The interpreter then executes:
-variables and scopes, arithmetic, `&&`/`||`/`??`, `if`/`else`, **`while` and
-`for`/range loops**, **recursion**, **`struct`s** (construct, read, mutate),
-**`match`**, string concat and `${...}` interpolation, and `print`. The
-front-end also parses the **`component`/`state`/`render` UI tree** — UI rendering
-waits for the mobile phase. Next: a native backend. See
+🚧 **Phase 4 — Compiles to native code.** Abyss now **transpiles to C and
+compiles to a native binary** (`abyssc --emit-c file.aby | cc`), on top of a
+working interpreter and static type checker. The compiled binary runs **~370×
+faster than the interpreter** on `fib(32)` and produces identical output — the
+first concrete step toward the "faster than Dart" goal.
+
+Pipeline: **lex → parse → type-check → (interpret | emit C → cc → native)**.
+Static checks catch `Int + String`, wrong arg/field counts, non-`Bool`
+conditions, unknown fields, return mismatches, and undefined names (with line
+numbers; `--no-check` skips). Language: variables/scopes, arithmetic,
+`&&`/`||`/`??`, `if`/`else`, `while` and `for`/range loops, recursion,
+`struct`s, `match`, string concat and `${...}` interpolation, `print`. The
+front-end also parses the `component`/`state`/`render` UI tree. (The C backend
+covers functions, control flow, arithmetic, strings and `print`; `struct`/`match`
+run in the interpreter and are next for the backend.) See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Build & run
 
 ```sh
 make                              # build abyssc
-./abyssc examples/run_demo.aby    # RUN a program (calls main)
-./abyssc --ast examples/demo.aby  # print the AST instead
-./abyssc --tokens examples/demo.aby   # print the raw token stream
-make run                          # build + run the demo program
+./abyssc examples/run_demo.aby    # RUN a program via the interpreter
+make native                       # transpile run_demo to C, compile, run natively
+./abyssc --emit-c examples/run_demo.aby   # print the generated C
+./abyssc --ast examples/demo.aby  # print the AST
+./abyssc --tokens examples/demo.aby       # print the token stream
 ```
 
 Running `run_demo.aby` prints:
