@@ -1,0 +1,27 @@
+// demo.aby — exercises everything the parser handles today:
+// typed declarations, functions, expression bodies, control flow,
+// operator precedence, calls, member access, null-safe access.
+
+let pi: Float = 3.14159
+var counter = 0
+
+fn area(radius: Float) -> Float = pi * radius * radius
+
+fn classify(n: Int) -> String {
+    if n < 0 {
+        return "negative"
+    } else if n == 0 {
+        return "zero"
+    } else {
+        return "positive"
+    }
+}
+
+fn main() {
+    counter += 1
+    let r = 2.0 + 3.0 * 4.0          // precedence: * before +
+    let ok = counter > 0 && r < 100.0
+    let name = user?.profile?.name ?? "guest"
+    print(classify(counter))
+    print(area(r))
+}

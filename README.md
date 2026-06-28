@@ -34,16 +34,20 @@ component Counter {
 
 ## Status
 
-🚧 **Phase 1 — Front-end / Lexer.** `abyssc` currently tokenizes `.aby`
-source. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full plan and
-[`docs/SPEC.md`](docs/SPEC.md) for the language grammar.
+🚧 **Phase 1 — Front-end.** The **lexer** and a **parser** are working:
+`abyssc` parses declarations, functions, control flow, and full
+expression-precedence into an AST. UI-tree parsing (`component`/`render`) and
+`struct`/`match`/`for` are the next parser increment. See
+[`docs/ROADMAP.md`](docs/ROADMAP.md) for the plan and
+[`docs/SPEC.md`](docs/SPEC.md) for the grammar.
 
 ## Build & run
 
 ```sh
-make                       # build the abyssc compiler
-./abyssc examples/counter.aby   # print the token stream
-make run                   # build + tokenize the counter example
+make                          # build the abyssc compiler
+./abyssc examples/demo.aby    # parse and print the AST
+./abyssc --tokens examples/demo.aby   # print the raw token stream
+make run                      # build + parse the demo example
 ```
 
 Requires a C11 compiler (`cc`/`clang`/`gcc`) and `make`.

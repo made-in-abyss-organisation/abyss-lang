@@ -7,7 +7,7 @@ you make it fast; make it fast before you make it pretty.*
 | Phase | Name | Deliverable |
 |------:|------|-------------|
 | 0 | **Specification** | Grammar + semantics written down (`docs/SPEC.md`). |
-| 1 | **Front-end (Lexer + Parser)** | `abyssc` reads `.aby` → tokens → AST. ← *we are here (lexer)* |
+| 1 | **Front-end (Lexer + Parser)** | `abyssc` reads `.aby` → tokens → AST. ← *lexer + core parser done; UI-tree/struct/match next* |
 | 2 | **Tree-walking interpreter** | Programs actually run: `2 + 3 * 4 → 14`, then vars, fns, `if`, `match`, structs. |
 | 3 | **Type checker** | Static analysis: type inference, null-safety, immutability — bad programs rejected with clear errors. |
 | 4 | **Backend (transpile to C)** | Emit C, compile with clang → native ARM executable. |
