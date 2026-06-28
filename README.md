@@ -34,9 +34,10 @@ component Counter {
 
 ## Status
 
-🚧 **Phase 1 — Front-end.** The **lexer** and a **parser** are working:
-`abyssc` parses declarations, functions, control flow, and full
-expression-precedence into an AST. UI-tree parsing (`component`/`render`) and
+🚧 **Phase 1 — Front-end.** The **lexer** and **parser** are working:
+`abyssc` parses declarations, functions, control flow, full
+expression-precedence, imports, and the **`component`/`state`/`render` UI tree**
+(including chained modifiers like `.size(24).bold()`) into an AST.
 `struct`/`match`/`for` are the next parser increment. See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) for the plan and
 [`docs/SPEC.md`](docs/SPEC.md) for the grammar.

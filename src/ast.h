@@ -13,6 +13,7 @@ typedef enum {
     NODE_CALL,       /* callee(args...)                    */
     NODE_GET,        /* object.name  or  object?.name      */
     /* declarations / statements */
+    NODE_IMPORT,     /* import "path" [as name]            */
     NODE_VAR_DECL,   /* let/var name: type = init          */
     NODE_FN_DECL,    /* fn name(params) -> ret { body }     */
     NODE_PARAM,      /* name: type                         */
@@ -20,6 +21,12 @@ typedef enum {
     NODE_IF,         /* if cond { then } else { else }      */
     NODE_BLOCK,      /* { statements }                     */
     NODE_EXPR_STMT,  /* an expression used as a statement   */
+    /* UI / reactive constructs (the signature feature) */
+    NODE_COMPONENT,  /* component Name { members render {ui}}*/
+    NODE_STATE_DECL, /* state name: type = init            */
+    NODE_UI_NODE,    /* Widget(args) { children } .mods     */
+    NODE_UI_ARG,     /* [label:] expr                      */
+    NODE_MODIFIER,   /* .name(args)                        */
     NODE_PROGRAM     /* the whole file                     */
 } NodeType;
 
@@ -43,6 +50,7 @@ struct Node {
         struct { char *op; Node *target; Node *value; } assign;
         struct { Node *callee; NodeList args; } call;
         struct { Node *object; char *name; int safe; } get;  /* safe = ?. */
+        struct { char *path; char *alias; } import;   /* alias may be NULL */
         struct { int is_mutable; char *name; char *decl_type; Node *init; } var_decl;
         struct { int is_async; char *name; NodeList params;
                  char *ret_type; Node *body; } fn_decl;
@@ -51,6 +59,12 @@ struct Node {
         struct { Node *cond; Node *then_branch; Node *else_branch; } if_stmt;
         struct { NodeList statements; } block;
         struct { Node *expr; } expr_stmt;
+        struct { char *name; NodeList members; Node *render_body; } component;
+        struct { char *name; char *decl_type; Node *init; } state_decl;
+        struct { char *name; NodeList args; NodeList children;
+                 NodeList modifiers; } ui_node;
+        struct { char *label; Node *value; } ui_arg;   /* label may be NULL */
+        struct { char *name; NodeList args; } modifier;
         struct { NodeList declarations; } program;
     } as;
 };

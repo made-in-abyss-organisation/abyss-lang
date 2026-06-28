@@ -309,6 +309,98 @@ static Node *parse_if(Parser *p) {
     return n;
 }
 
+/* ---------- UI tree (the signature feature) ---------- */
+
+/* uiArgs = uiArg { "," uiArg } ;  uiArg = [ IDENT ":" ] expr  */
+static void parse_ui_args(Parser *p, NodeList *out) {
+    if (check(p, TOK_RPAREN)) return;
+    do {
+        Node *arg = new_node(NODE_UI_ARG, p->current.line);
+        arg->as.ui_arg.label = NULL;
+        if (check(p, TOK_IDENT) && peek_is(p, TOK_COLON)) {
+            arg->as.ui_arg.label = token_text(p->current);
+            advance(p);  /* label */
+            advance(p);  /* ':'   */
+        }
+        arg->as.ui_arg.value = parse_expression(p);
+        nodelist_push(out, arg);
+    } while (match_tok(p, TOK_COMMA));
+}
+
+/* uiNode = IDENT [ "(" uiArgs ")" ] [ "{" {uiNode} "}" ] { modifier } */
+static Node *parse_ui_node(Parser *p) {
+    Node *n = new_node(NODE_UI_NODE, p->current.line);
+    n->as.ui_node.name = token_text(p->current);
+    consume(p, TOK_IDENT, "expected a widget name");
+    nodelist_init(&n->as.ui_node.args);
+    nodelist_init(&n->as.ui_node.children);
+    nodelist_init(&n->as.ui_node.modifiers);
+
+    if (match_tok(p, TOK_LPAREN)) {
+        parse_ui_args(p, &n->as.ui_node.args);
+        consume(p, TOK_RPAREN, "expected ')' after widget arguments");
+    }
+    if (check(p, TOK_LBRACE)) {
+        advance(p);
+        while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF))
+            nodelist_push(&n->as.ui_node.children, parse_ui_node(p));
+        consume(p, TOK_RBRACE, "expected '}' to close widget children");
+    }
+    while (check(p, TOK_DOT)) {            /* chained .modifier(...) */
+        advance(p);
+        Node *mod = new_node(NODE_MODIFIER, p->current.line);
+        mod->as.modifier.name = token_text(p->current);
+        consume(p, TOK_IDENT, "expected modifier name after '.'");
+        nodelist_init(&mod->as.modifier.args);
+        consume(p, TOK_LPAREN, "expected '(' after modifier name");
+        parse_ui_args(p, &mod->as.modifier.args);
+        consume(p, TOK_RPAREN, "expected ')' after modifier arguments");
+        nodelist_push(&n->as.ui_node.modifiers, mod);
+    }
+    return n;
+}
+
+static Node *parse_state_decl(Parser *p) {
+    Node *n = new_node(NODE_STATE_DECL, p->previous.line);
+    n->as.state_decl.name = token_text(p->current);
+    consume(p, TOK_IDENT, "expected state variable name");
+    consume(p, TOK_COLON, "expected ':' after state name");
+    n->as.state_decl.decl_type = parse_type(p);
+    n->as.state_decl.init = NULL;
+    if (match_tok(p, TOK_ASSIGN)) n->as.state_decl.init = parse_expression(p);
+    return n;
+}
+
+/* componentDecl = "component" IDENT "{" {stateDecl|fnDecl} "render" "{" uiNode "}" "}" */
+static Node *parse_component(Parser *p) {
+    Node *n = new_node(NODE_COMPONENT, p->previous.line);
+    n->as.component.name = token_text(p->current);
+    consume(p, TOK_IDENT, "expected component name");
+    consume(p, TOK_LBRACE, "expected '{' after component name");
+    nodelist_init(&n->as.component.members);
+    n->as.component.render_body = NULL;
+
+    while (!check(p, TOK_RENDER) && !check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        if (match_tok(p, TOK_STATE)) {
+            nodelist_push(&n->as.component.members, parse_state_decl(p));
+        } else if (match_tok(p, TOK_FN)) {
+            nodelist_push(&n->as.component.members, parse_fn_decl(p, 0));
+        } else if (match_tok(p, TOK_ASYNC)) {
+            consume(p, TOK_FN, "expected 'fn' after 'async'");
+            nodelist_push(&n->as.component.members, parse_fn_decl(p, 1));
+        } else {
+            error_at(p, p->current, "expected 'state', a function, or 'render'");
+            advance(p);
+        }
+    }
+    consume(p, TOK_RENDER, "expected a 'render' block in component");
+    consume(p, TOK_LBRACE, "expected '{' after 'render'");
+    n->as.component.render_body = parse_ui_node(p);
+    consume(p, TOK_RBRACE, "expected '}' to close render block");
+    consume(p, TOK_RBRACE, "expected '}' to close component");
+    return n;
+}
+
 static Node *parse_statement(Parser *p) {
     if (match_tok(p, TOK_RETURN)) {
         Node *n = new_node(NODE_RETURN, p->previous.line);
@@ -324,10 +416,24 @@ static Node *parse_statement(Parser *p) {
     return n;
 }
 
+static Node *parse_import(Parser *p) {
+    Node *n = new_node(NODE_IMPORT, p->previous.line);
+    n->as.import.path = token_text(p->current);
+    consume(p, TOK_STRING, "expected a module path string after 'import'");
+    n->as.import.alias = NULL;
+    if (match_tok(p, TOK_AS)) {
+        n->as.import.alias = token_text(p->current);
+        consume(p, TOK_IDENT, "expected an alias name after 'as'");
+    }
+    return n;
+}
+
 static Node *parse_declaration(Parser *p) {
+    if (match_tok(p, TOK_IMPORT)) return parse_import(p);
     if (match_tok(p, TOK_LET))  return parse_var_decl(p, 0);
     if (match_tok(p, TOK_VAR))  return parse_var_decl(p, 1);
     if (match_tok(p, TOK_FN))   return parse_fn_decl(p, 0);
+    if (match_tok(p, TOK_COMPONENT)) return parse_component(p);
     if (match_tok(p, TOK_ASYNC)) {
         consume(p, TOK_FN, "expected 'fn' after 'async'");
         return parse_fn_decl(p, 1);
