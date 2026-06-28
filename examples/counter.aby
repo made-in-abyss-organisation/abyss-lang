@@ -1,0 +1,21 @@
+// counter.aby — the signature Abyss feature: UI as a language construct.
+// `state` is reactive; mutating it re-runs `render` automatically.
+
+import "abyss/ui"
+
+component Counter {
+    state count: Int = 0
+
+    fn increment() {
+        count += 1
+    }
+
+    render {
+        Column(spacing: 12) {
+            Text("Count: ${count}")
+                .size(24)
+                .bold()
+            Button("Increment", on_tap: increment)
+        }
+    }
+}

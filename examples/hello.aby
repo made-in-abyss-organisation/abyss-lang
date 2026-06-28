@@ -1,0 +1,6 @@
+// hello.aby — the smallest Abyss program
+
+fn main() {
+    let name = "Abyss"
+    print("Hello, ${name}!")
+}

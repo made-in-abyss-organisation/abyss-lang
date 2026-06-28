@@ -1,0 +1,12 @@
+# build artifacts
+*.o
+*.a
+*.out
+abyssc
+/build/
+
+# editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
