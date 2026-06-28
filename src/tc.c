@@ -431,35 +431,41 @@ int typecheck(Node *program) {
 
     NodeList *decls = &program->as.program.declarations;
 
-    /* pass 1: register all global names (so recursion & forward refs resolve) */
+    /* pass 1a: register fn & struct names (so recursion & forward refs resolve) */
     for (int i = 0; i < decls->count; i++) {
         Node *d = decls->items[i];
         if (d->type == NODE_FN_DECL)
             te_define(g_globals, d->as.fn_decl.name, ty_fn(d));
         else if (d->type == NODE_STRUCT)
             te_define(g_globals, d->as.struct_decl.name, ty_struct_def(d));
-        else if (d->type == NODE_VAR_DECL)
-            te_define(g_globals, d->as.var_decl.name,
-                      d->as.var_decl.decl_type ? type_from_name(d->as.var_decl.decl_type)
-                                               : ty(TY_ANY));
     }
 
-    /* pass 2: check bodies and global initialisers */
+    /* pass 1b: type each global from its declaration/initialiser and register
+     * that exact type, so a global's storage (d->ty) and every USE (resolved
+     * via the env) agree — codegen emits consistent native-or-boxed C. */
     for (int i = 0; i < decls->count; i++) {
         Node *d = decls->items[i];
-        if (d->type == NODE_FN_DECL) {
-            check_fn(d);
-        } else if (d->type == NODE_VAR_DECL && d->as.var_decl.init) {
-            Type init = check_expr(d->as.var_decl.init, g_globals);
-            Type declared = init;
-            if (d->as.var_decl.decl_type) {
-                declared = type_from_name(d->as.var_decl.decl_type);
-                if (!compatible(declared, init))
+        if (d->type != NODE_VAR_DECL) continue;
+        Type t;
+        if (d->as.var_decl.decl_type) {
+            t = type_from_name(d->as.var_decl.decl_type);
+            if (d->as.var_decl.init) {
+                Type init = check_expr(d->as.var_decl.init, g_globals);
+                if (!compatible(t, init))
                     terror(d->line, "'%s' is declared %s but initialised with %s",
-                           d->as.var_decl.name, kind_name(declared.kind), kind_name(init.kind));
+                           d->as.var_decl.name, kind_name(t.kind), kind_name(init.kind));
             }
-            d->ty = aty_of(declared.kind);   /* global storage type for codegen */
+        } else {
+            t = d->as.var_decl.init ? check_expr(d->as.var_decl.init, g_globals) : ty(TY_ANY);
         }
+        d->ty = aty_of(t.kind);
+        te_define(g_globals, d->as.var_decl.name, t);
     }
+
+    /* pass 2: check function bodies (globals now have their real types) */
+    for (int i = 0; i < decls->count; i++)
+        if (decls->items[i]->type == NODE_FN_DECL)
+            check_fn(decls->items[i]);
+
     return g_errors;
 }

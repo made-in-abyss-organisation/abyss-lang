@@ -33,7 +33,7 @@ static const char *cty(int ty) {
     switch (ty) {
         case CG_INT:   return "long long";
         case CG_FLOAT: return "double";
-        case CG_BOOL:  return "int";
+        case CG_BOOL:  return "_Bool";   /* distinct from int so _Generic (AV_OF) routes Bool -> av_bool */
         default:       return "AV";
     }
 }
@@ -47,15 +47,10 @@ static Node *find_fn(const char *name) {
     return NULL;
 }
 
-/* a function uses a native ABI iff its return and every parameter are concrete
- * scalars (Int/Float/Bool); otherwise it is fully boxed (all-AV) as before. */
-static int fn_is_native(Node *fn) {
-    if (!is_native(fn->ty)) return 0;
-    NodeList *ps = &fn->as.fn_decl.params;
-    for (int i = 0; i < ps->count; i++)
-        if (!is_native(ps->items[i]->ty)) return 0;
-    return 1;
-}
+/* Each parameter and the return are typed INDEPENDENTLY: a scalar param/return
+ * is native (cty -> long long/double/_Bool), anything else is AV. Storage uses
+ * cty(), uses report norm() — consistent for every type, so native and boxed
+ * code interoperate through gen_expr_as without an all-or-nothing ABI. */
 
 /* ---------- the C runtime prelude ---------- */
 
@@ -74,8 +69,8 @@ static void gen_prelude(FILE *o) {
     fputs("static AV av_str(const char *s){ AV v; v.k=AV_STR; v.u.s=s; return v; }\n", o);
     fputs("static AV av_id(AV v){ return v; }\n", o);
     /* AV_OF: box any scalar C value (used by string interpolation) */
-    fputs("#define AV_OF(x) _Generic((x), AV: av_id, long long: av_int, int: av_inti, "
-          "double: av_float, const char *: av_str, char *: av_str)(x)\n", o);
+    fputs("#define AV_OF(x) _Generic((x), AV: av_id, _Bool: av_bool, long long: av_int, "
+          "int: av_inti, double: av_float, const char *: av_str, char *: av_str)(x)\n", o);
     fputs("static int av_isnum(AV v){ return v.k==AV_INT||v.k==AV_FLOAT; }\n", o);
     fputs("static double av_num(AV v){ return v.k==AV_INT?(double)v.u.i:v.u.f; }\n", o);
     fputs("static long long av_as_int(AV v){ return v.k==AV_INT?v.u.i:(long long)av_num(v); }\n", o);
@@ -83,8 +78,11 @@ static void gen_prelude(FILE *o) {
     fputs("static AV av_add(AV a, AV b){ if(a.k==AV_STR&&b.k==AV_STR){ char *s=malloc(strlen(a.u.s)+strlen(b.u.s)+1); strcpy(s,a.u.s); strcat(s,b.u.s); return av_str(s);} if(a.k==AV_INT&&b.k==AV_INT)return av_int(a.u.i+b.u.i); return av_float(av_num(a)+av_num(b)); }\n", o);
     fputs("static AV av_sub(AV a, AV b){ if(a.k==AV_INT&&b.k==AV_INT)return av_int(a.u.i-b.u.i); return av_float(av_num(a)-av_num(b)); }\n", o);
     fputs("static AV av_mul(AV a, AV b){ if(a.k==AV_INT&&b.k==AV_INT)return av_int(a.u.i*b.u.i); return av_float(av_num(a)*av_num(b)); }\n", o);
-    fputs("static AV av_div(AV a, AV b){ if(a.k==AV_INT&&b.k==AV_INT)return av_int(a.u.i/b.u.i); return av_float(av_num(a)/av_num(b)); }\n", o);
-    fputs("static AV av_mod(AV a, AV b){ return av_int(a.u.i % b.u.i); }\n", o);
+    /* integer / and % match the interpreter: a clean runtime error on zero */
+    fputs("static long long abyss_idiv(long long a, long long b){ if(b==0){ fprintf(stderr,\"abyss runtime error: division by zero\\n\"); exit(70);} return a/b; }\n", o);
+    fputs("static long long abyss_imod(long long a, long long b){ if(b==0){ fprintf(stderr,\"abyss runtime error: modulo by zero\\n\"); exit(70);} return a%b; }\n", o);
+    fputs("static AV av_div(AV a, AV b){ if(a.k==AV_INT&&b.k==AV_INT)return av_int(abyss_idiv(a.u.i,b.u.i)); return av_float(av_num(a)/av_num(b)); }\n", o);
+    fputs("static AV av_mod(AV a, AV b){ return av_int(abyss_imod(a.u.i, b.u.i)); }\n", o);
     fputs("static AV av_lt(AV a, AV b){ return av_bool(av_num(a)<av_num(b)); }\n", o);
     fputs("static AV av_gt(AV a, AV b){ return av_bool(av_num(a)>av_num(b)); }\n", o);
     fputs("static AV av_le(AV a, AV b){ return av_bool(av_num(a)<=av_num(b)); }\n", o);
@@ -213,8 +211,12 @@ static int gen_binary(Node *n, FILE *o) {
         return CG_BOOL;
     }
     if (!strcmp(op, "??")) {
-        fputs("av_coalesce(", o); gen_expr_as(L, CG_OTHER, o);
-        fputs(", ", o); gen_expr_as(R, CG_OTHER, o); fputc(')', o);
+        /* short-circuit: evaluate R only when L is nil (matches the interpreter).
+         * statement-expression keeps L single-evaluated; clang/gcc support it. */
+        int id = g_tmp++;
+        fprintf(o, "({ AV _q%d = ", id); gen_expr_as(L, CG_OTHER, o);
+        fprintf(o, "; _q%d.k==AV_NIL ? ", id); gen_expr_as(R, CG_OTHER, o);
+        fprintf(o, " : _q%d; })", id);
         return CG_OTHER;
     }
     int relational = !strcmp(op, "<") || !strcmp(op, ">") ||
@@ -238,12 +240,16 @@ static int gen_binary(Node *n, FILE *o) {
             return CG_BOOL;
         }
     } else if (!strcmp(op, "%")) {
-        if (lt == CG_INT && rt == CG_INT) {
-            fputc('(', o); gen_expr_as(L, CG_INT, o); fputs(" % ", o);
+        if (lt == CG_INT && rt == CG_INT) {   /* guarded, like the interpreter */
+            fputs("abyss_imod(", o); gen_expr_as(L, CG_INT, o); fputs(", ", o);
             gen_expr_as(R, CG_INT, o); fputc(')', o);
             return CG_INT;
         }
-    } else {  /* + - * / */
+    } else if (!strcmp(op, "/") && native_num && common == CG_INT) {
+        fputs("abyss_idiv(", o); gen_expr_as(L, CG_INT, o); fputs(", ", o);
+        gen_expr_as(R, CG_INT, o); fputc(')', o);
+        return CG_INT;
+    } else {  /* + - * , and float / */
         if (native_num) {
             fputc('(', o); gen_expr_as(L, common, o);
             fprintf(o, " %s ", op); gen_expr_as(R, common, o); fputc(')', o);
@@ -320,16 +326,15 @@ static int gen_expr(Node *n, FILE *o) {
                 if (!fn) {   /* struct constructor or other non-fn: not in backend yet */
                     g_unsupported++; fputs("av_nil()", o); return CG_OTHER;
                 }
-                int native = fn_is_native(fn);
                 fprintf(o, "af_%s(", callee->as.ident.name);
                 for (int i = 0; i < args->count; i++) {
                     if (i) fputs(", ", o);
-                    int want = (native && i < fn->as.fn_decl.params.count)
+                    int want = i < fn->as.fn_decl.params.count
                              ? norm(fn->as.fn_decl.params.items[i]->ty) : CG_OTHER;
                     gen_expr_as(args->items[i], want, o);
                 }
                 fputc(')', o);
-                return native ? norm(fn->ty) : CG_OTHER;
+                return norm(fn->ty);
             }
             g_unsupported++; fputs("av_nil()", o); return CG_OTHER;
         }
@@ -414,20 +419,18 @@ static void gen_stmt(Node *n, FILE *o, int ind) {
 /* ---------- functions, globals, main ---------- */
 
 static void gen_fn_proto(Node *fn, FILE *o) {
-    int native = fn_is_native(fn);
-    fprintf(o, "static %s af_%s(", native ? cty(fn->ty) : "AV", fn->as.fn_decl.name);
+    fprintf(o, "static %s af_%s(", cty(fn->ty), fn->as.fn_decl.name);
     NodeList *ps = &fn->as.fn_decl.params;
     if (ps->count == 0) fputs("void", o);
     for (int i = 0; i < ps->count; i++) {
         if (i) fputs(", ", o);
-        fprintf(o, "%s a_%s", native ? cty(ps->items[i]->ty) : "AV", ps->items[i]->as.param.name);
+        fprintf(o, "%s a_%s", cty(ps->items[i]->ty), ps->items[i]->as.param.name);
     }
     fputs(")", o);
 }
 
 static void gen_fn(Node *fn, FILE *o) {
-    int native = fn_is_native(fn);
-    g_fn_ret = native ? norm(fn->ty) : CG_OTHER;
+    g_fn_ret = norm(fn->ty);
     gen_fn_proto(fn, o);
     fputs(" {\n", o);
     gen_stmt(fn->as.fn_decl.body, o, 1);
