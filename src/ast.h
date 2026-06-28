@@ -38,6 +38,13 @@ typedef enum {
 
 typedef struct Node Node;
 
+/* Codegen type tag, written by the type checker (tc.c) onto every node and
+ * read by the C backend (codegen.c) to emit native C types. CG_UNKNOWN = 0 so
+ * calloc'd nodes default to "unknown" → the backend falls back to boxed AV. */
+typedef enum {
+    CG_UNKNOWN = 0, CG_INT, CG_FLOAT, CG_BOOL, CG_STR, CG_OTHER
+} CgTy;
+
 /* a growable list of node pointers */
 typedef struct {
     Node **items;
@@ -48,6 +55,7 @@ typedef struct {
 struct Node {
     NodeType type;
     int line;
+    int ty;   /* CgTy — inferred type for codegen; 0 (CG_UNKNOWN) until tc runs */
     union {
         struct { TokenType kind; char *text; } literal;
         struct { char *name; } ident;

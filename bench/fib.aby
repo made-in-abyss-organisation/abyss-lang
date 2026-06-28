@@ -1,0 +1,12 @@
+// Benchmark: naive recursive Fibonacci. Recursion-bound; a compiler cannot
+// fold it to a closed form, so it measures real call + arithmetic throughput.
+fn fib(n: Int) -> Int {
+    if n < 2 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    print(fib(35))
+}

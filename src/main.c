@@ -89,7 +89,9 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    if (!no_check) {
+    /* --emit-c needs the type annotations the checker writes onto the AST,
+     * so always type-check before codegen (even under --no-check). */
+    if (!no_check || mode_emit_c) {
         int errs = typecheck(program);
         if (errs > 0) {
             fprintf(stderr, "abyssc: %d type error(s); not running.\n", errs);

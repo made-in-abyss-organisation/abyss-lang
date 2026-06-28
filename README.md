@@ -34,13 +34,17 @@ component Counter {
 
 ## Status
 
-🚧 **Phase 4 — Compiles to native code.** Abyss now **transpiles to C and
-compiles to a native binary** (`abyssc --emit-c file.aby | cc`), on top of a
-working interpreter and static type checker. The compiled binary runs **~370×
-faster than the interpreter** on `fib(32)` and produces identical output — the
-first concrete step toward the "faster than Dart" goal.
+🚧 **Phase 5 — Native types, benchmarked vs Dart.** The backend now emits
+**native C scalar types** (`long long`/`double`/`int`) instead of boxed values
+wherever the type checker proved a concrete type, with a single box/unbox
+chokepoint at the boundaries. Result on identical algorithms (`make bench`,
+clang 21 vs Dart 3.11.1 AOT, i7-9750H): Abyss-native **matches hand-written C**
+and **beats Dart-AOT** — ~2.3× on `fib(35)`, ~1.1× on a 100M-iteration integer
+loop. (Honest scope: this is throughput *parity with native C* on numeric code,
+not a universal win; the durable edge over Dart is meant to be ARC/no-GC
+frame-time, a later phase. See [`bench/BENCHMARKS.md`](bench/BENCHMARKS.md).)
 
-Pipeline: **lex → parse → type-check → (interpret | emit C → cc → native)**.
+Pipeline: **lex → parse → type-check (annotates types) → (interpret | emit C → cc → native)**.
 Static checks catch `Int + String`, wrong arg/field counts, non-`Bool`
 conditions, unknown fields, return mismatches, and undefined names (with line
 numbers; `--no-check` skips). Language: variables/scopes, arithmetic,

@@ -11,7 +11,8 @@ you make it fast; make it fast before you make it pretty.*
 | 2 | **Tree-walking interpreter** | Programs run: vars, arithmetic, recursion, `if`, `while`, `for`/ranges, `struct`, `match`, `print`, string interpolation. ← *done* |
 | 3 | **Type checker** | Static analysis: type inference, arg/field/return checks, Bool conditions — bad programs rejected with clear errors. ← *done (null-safety/immutability still TODO)* |
 | 4 | **Backend (transpile to C)** | Emit C, compile with cc/clang → native executable. ← *done: `abyssc --emit-c` + `make native`; ~370× faster than the interpreter on fib(32)* |
-| 5 | **Runtime + stdlib** | ARC memory management, `String`/`List`/`Map`, async runtime. |
+| 5 | **Native types + benchmarks** | Type-directed codegen: emit native `long long`/`double`/`int` (not boxed `AV`) where types are known; benchmark suite vs Dart AOT. ← *done: matches hand-C, beats Dart-AOT ~2.3× on fib / ~1.1× on the integer loop (`make bench`)* |
+| 5b | **Runtime + stdlib** | ARC memory management, `String`/`List`/`Map`, async runtime. |
 | 6 | **Mobile layer** | Bind Skia; widget framework; `state` → re-render. `Counter` runs on a real Android device. |
 | 7 | **Tooling** | Hot reload (<1s), error reporting, package manager, LSP. |
 | 8 | **Platform & packaging** | Android (APK) first, then iOS (IPA, requires a Mac). |

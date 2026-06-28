@@ -105,6 +105,17 @@ static Type type_from_name(const char *name) {
     return ty(TY_ANY);
 }
 
+/* map a checker type to the codegen tag the backend reads off each node */
+static int aty_of(TypeKind k) {
+    switch (k) {
+        case TY_INT:    return CG_INT;
+        case TY_FLOAT:  return CG_FLOAT;
+        case TY_BOOL:   return CG_BOOL;
+        case TY_STRING: return CG_STR;
+        default:        return CG_OTHER;
+    }
+}
+
 /* expected <- actual: is `actual` usable where `expected` is wanted? */
 static int compatible(Type expected, Type actual) {
     if (is_unknown(expected.kind) || is_unknown(actual.kind)) return 1;
@@ -123,6 +134,7 @@ static const char *struct_name(Type t) {
 /* ---------- expression & statement checking ---------- */
 
 static Type check_expr(Node *n, TypeEnv *env);
+static Type check_expr_inner(Node *n, TypeEnv *env);
 static void check_stmt(Node *n, TypeEnv *env);
 
 static Type check_call(Node *n, TypeEnv *env) {
@@ -242,6 +254,7 @@ static Type check_assign(Node *n, TypeEnv *env) {
             terror(n->line, "undefined variable '%s'", target->as.ident.name);
             return vt;
         }
+        target->ty = aty_of(tt.kind);   /* annotate target so codegen knows its C type */
         if (compound && !is_unknown(tt.kind) && !is_num(tt.kind))
             terror(n->line, "'%s' needs a number", n->as.assign.op);
         else if (!compound && !compatible(tt, vt))
@@ -282,7 +295,14 @@ static Type check_match(Node *n, TypeEnv *env) {
     return result;
 }
 
+/* wrapper: annotate every expression node with its codegen type, then return */
 static Type check_expr(Node *n, TypeEnv *env) {
+    Type t = check_expr_inner(n, env);
+    n->ty = aty_of(t.kind);
+    return t;
+}
+
+static Type check_expr_inner(Node *n, TypeEnv *env) {
     switch (n->type) {
         case NODE_LITERAL:
             switch (n->as.literal.kind) {
@@ -342,6 +362,7 @@ static void check_stmt(Node *n, TypeEnv *env) {
             } else {
                 declared = init;
             }
+            n->ty = aty_of(declared.kind);   /* storage type for codegen */
             te_define(env, n->as.var_decl.name, declared);
             break;
         }
@@ -390,11 +411,14 @@ static void check_stmt(Node *n, TypeEnv *env) {
 static void check_fn(Node *decl) {
     TypeEnv *scope = te_new(g_globals);
     NodeList *ps = &decl->as.fn_decl.params;
-    for (int i = 0; i < ps->count; i++)
-        te_define(scope, ps->items[i]->as.param.name,
-                  type_from_name(ps->items[i]->as.param.param_type));
+    for (int i = 0; i < ps->count; i++) {
+        Type pt = type_from_name(ps->items[i]->as.param.param_type);
+        ps->items[i]->ty = aty_of(pt.kind);     /* param C type for codegen */
+        te_define(scope, ps->items[i]->as.param.name, pt);
+    }
     g_return = decl->as.fn_decl.ret_type
              ? type_from_name(decl->as.fn_decl.ret_type) : ty(TY_ANY);
+    decl->ty = aty_of(g_return.kind);            /* return C type for codegen */
     check_stmt(decl->as.fn_decl.body, scope);
 }
 
@@ -427,12 +451,14 @@ int typecheck(Node *program) {
             check_fn(d);
         } else if (d->type == NODE_VAR_DECL && d->as.var_decl.init) {
             Type init = check_expr(d->as.var_decl.init, g_globals);
+            Type declared = init;
             if (d->as.var_decl.decl_type) {
-                Type declared = type_from_name(d->as.var_decl.decl_type);
+                declared = type_from_name(d->as.var_decl.decl_type);
                 if (!compatible(declared, init))
                     terror(d->line, "'%s' is declared %s but initialised with %s",
                            d->as.var_decl.name, kind_name(declared.kind), kind_name(init.kind));
             }
+            d->ty = aty_of(declared.kind);   /* global storage type for codegen */
         }
     }
     return g_errors;

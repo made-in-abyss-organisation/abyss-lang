@@ -12,7 +12,10 @@ all: $(BIN)
 $(BIN): $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $(OBJ)
 
-src/%.o: src/%.c
+# rebuild every object when any header changes (headers are small and shared)
+HDR := $(wildcard src/*.h)
+
+src/%.o: src/%.c $(HDR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 run: $(BIN)
@@ -24,6 +27,10 @@ native: $(BIN)
 	./$(BIN) --emit-c examples/run_demo.aby > build/run_demo.c
 	$(CC) -O2 build/run_demo.c -o build/run_demo
 	./build/run_demo
+
+# benchmark abyss-native vs hand-C vs Dart-AOT (needs dart on PATH)
+bench: $(BIN)
+	python3 bench/run.py
 
 clean:
 	rm -f $(OBJ) $(BIN)
