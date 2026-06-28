@@ -1,0 +1,30 @@
+// run_demo.aby — a program Abyss can actually execute.
+// Run it with:  ./abyssc examples/run_demo.aby
+
+fn factorial(n: Int) -> Int {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+fn fib(n: Int) -> Int {
+    if n < 2 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    print("factorial(5) =", factorial(5))
+    print("fib(10)      =", fib(10))
+    print("2 + 3 * 4    =", 2 + 3 * 4)
+    print("greeting     =", "hello, " + "Abyss")
+
+    let x = 7
+    if x % 2 == 0 {
+        print(x, "is even")
+    } else {
+        print(x, "is odd")
+    }
+}

@@ -34,21 +34,32 @@ component Counter {
 
 ## Status
 
-🚧 **Phase 1 — Front-end.** The **lexer** and **parser** are working:
-`abyssc` parses declarations, functions, control flow, full
-expression-precedence, imports, and the **`component`/`state`/`render` UI tree**
-(including chained modifiers like `.size(24).bold()`) into an AST.
-`struct`/`match`/`for` are the next parser increment. See
-[`docs/ROADMAP.md`](docs/ROADMAP.md) for the plan and
-[`docs/SPEC.md`](docs/SPEC.md) for the grammar.
+🚧 **Phase 2 — Abyss runs.** A tree-walking interpreter executes programs:
+variables and scopes, arithmetic with correct precedence, comparisons,
+`&&`/`||`/`??`, `if`/`else`, **recursive functions**, string concatenation and
+`${...}` interpolation, and a built-in `print`. The front-end (lexer + parser)
+also handles the **`component`/`state`/`render` UI tree** — though UI rendering
+itself waits for the mobile phase. Next: a type checker, then a native backend.
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Build & run
 
 ```sh
-make                          # build the abyssc compiler
-./abyssc examples/demo.aby    # parse and print the AST
+make                              # build abyssc
+./abyssc examples/run_demo.aby    # RUN a program (calls main)
+./abyssc --ast examples/demo.aby  # print the AST instead
 ./abyssc --tokens examples/demo.aby   # print the raw token stream
-make run                      # build + parse the demo example
+make run                          # build + run the demo program
+```
+
+Running `run_demo.aby` prints:
+
+```
+factorial(5) = 120
+fib(10)      = 55
+2 + 3 * 4    = 14
+greeting     = hello, Abyss
+7 is odd
 ```
 
 Requires a C11 compiler (`cc`/`clang`/`gcc`) and `make`.

@@ -16,7 +16,7 @@ src/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 run: $(BIN)
-	./$(BIN) examples/demo.aby
+	./$(BIN) examples/run_demo.aby
 
 clean:
 	rm -f $(OBJ) $(BIN)

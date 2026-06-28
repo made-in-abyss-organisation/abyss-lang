@@ -1,14 +1,15 @@
 /*
- * abyssc — the Abyss compiler.
+ * abyssc — the Abyss compiler / runner.
  *
- * Phase 1 front-end:
- *   abyssc <file.aby>            parse and print the AST
+ *   abyssc <file.aby>            run the program (calls main)
+ *   abyssc --ast <file.aby>      parse and print the AST
  *   abyssc --tokens <file.aby>   print the raw token stream (lexer)
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "interp.h"
 #include "lexer.h"
 #include "parser.h"
 
@@ -50,20 +51,21 @@ static void dump_tokens(const char *source) {
 
 int main(int argc, char *argv[]) {
     const char *path = NULL;
-    int tokens_only = 0;
+    int mode_tokens = 0, mode_ast = 0;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--tokens") == 0) tokens_only = 1;
+        if (strcmp(argv[i], "--tokens") == 0) mode_tokens = 1;
+        else if (strcmp(argv[i], "--ast") == 0) mode_ast = 1;
         else path = argv[i];
     }
     if (!path) {
-        fprintf(stderr, "usage: abyssc [--tokens] <file.aby>\n");
+        fprintf(stderr, "usage: abyssc [--ast|--tokens] <file.aby>\n");
         return 64;
     }
 
     char *source = read_file(path);
 
-    if (tokens_only) {
+    if (mode_tokens) {
         dump_tokens(source);
         free(source);
         return 0;
@@ -76,7 +78,11 @@ int main(int argc, char *argv[]) {
         free(source);
         return 65;
     }
-    ast_print(program);
+
+    int code = 0;
+    if (mode_ast) ast_print(program);
+    else          code = interpret(program);
+
     free(source);
-    return 0;
+    return code;
 }
