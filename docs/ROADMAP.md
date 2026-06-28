@@ -8,7 +8,7 @@ you make it fast; make it fast before you make it pretty.*
 |------:|------|-------------|
 | 0 | **Specification** | Grammar + semantics written down (`docs/SPEC.md`). |
 | 1 | **Front-end (Lexer + Parser)** | `abyssc` reads `.aby` → tokens → AST. ← *lexer + core parser done; UI-tree/struct/match next* |
-| 2 | **Tree-walking interpreter** | Programs actually run: vars, arithmetic, recursion, `if`, `print`, string interpolation. ← *done (match/structs pending parser)* |
+| 2 | **Tree-walking interpreter** | Programs run: vars, arithmetic, recursion, `if`, `while`, `for`/ranges, `struct`, `match`, `print`, string interpolation. ← *done* |
 | 3 | **Type checker** | Static analysis: type inference, null-safety, immutability — bad programs rejected with clear errors. |
 | 4 | **Backend (transpile to C)** | Emit C, compile with clang → native ARM executable. |
 | 5 | **Runtime + stdlib** | ARC memory management, `String`/`List`/`Map`, async runtime. |

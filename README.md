@@ -34,13 +34,15 @@ component Counter {
 
 ## Status
 
-🚧 **Phase 2 — Abyss runs.** A tree-walking interpreter executes programs:
+🚧 **Phase 2 — Abyss runs.** A tree-walking interpreter executes real programs:
 variables and scopes, arithmetic with correct precedence, comparisons,
-`&&`/`||`/`??`, `if`/`else`, **recursive functions**, string concatenation and
-`${...}` interpolation, and a built-in `print`. The front-end (lexer + parser)
-also handles the **`component`/`state`/`render` UI tree** — though UI rendering
-itself waits for the mobile phase. Next: a type checker, then a native backend.
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/SPEC.md`](docs/SPEC.md).
+`&&`/`||`/`??`, `if`/`else`, **`while` and `for`/range loops**, **recursive
+functions**, **`struct`s** (construct, read, mutate fields), **`match`
+expressions**, string concatenation and `${...}` interpolation, and a built-in
+`print`. The front-end also parses the **`component`/`state`/`render` UI tree** —
+though UI rendering waits for the mobile phase. Next: a type checker, then a
+native backend. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and
+[`docs/SPEC.md`](docs/SPEC.md).
 
 ## Build & run
 

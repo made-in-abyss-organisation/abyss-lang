@@ -65,6 +65,7 @@ static TokenType keyword_or_ident(const char *s, int len) {
         {"import", TOK_IMPORT}, {"as", TOK_AS}, {"async", TOK_ASYNC},
         {"await", TOK_AWAIT}, {"return", TOK_RETURN}, {"if", TOK_IF},
         {"else", TOK_ELSE}, {"match", TOK_MATCH}, {"for", TOK_FOR},
+        {"while", TOK_WHILE},
         {"in", TOK_IN}, {"true", TOK_TRUE}, {"false", TOK_FALSE},
         {"nil", TOK_NIL},
     };
@@ -123,7 +124,7 @@ Token lexer_next(Lexer *l) {
         case '}': return make_token(l, TOK_RBRACE);
         case ',': return make_token(l, TOK_COMMA);
         case ':': return make_token(l, TOK_COLON);
-        case '.': return make_token(l, TOK_DOT);
+        case '.': return make_token(l, match(l, '.') ? TOK_DOTDOT : TOK_DOT);
         case '*': return make_token(l, TOK_STAR);
         case '/': return make_token(l, TOK_SLASH);
         case '%': return make_token(l, TOK_PERCENT);
@@ -167,6 +168,7 @@ const char *token_type_name(TokenType type) {
         case TOK_ELSE: return "ELSE";
         case TOK_MATCH: return "MATCH";
         case TOK_FOR: return "FOR";
+        case TOK_WHILE: return "WHILE";
         case TOK_IN: return "IN";
         case TOK_TRUE: return "TRUE";
         case TOK_FALSE: return "FALSE";
@@ -178,6 +180,7 @@ const char *token_type_name(TokenType type) {
         case TOK_COMMA: return "COMMA";
         case TOK_COLON: return "COLON";
         case TOK_DOT: return "DOT";
+        case TOK_DOTDOT: return "DOTDOT";
         case TOK_PLUS: return "PLUS";
         case TOK_MINUS: return "MINUS";
         case TOK_STAR: return "STAR";

@@ -70,6 +70,7 @@ static Node *parse_declaration(Parser *p);
 static Node *parse_statement(Parser *p);
 static Node *parse_block(Parser *p);
 static Node *parse_expression(Parser *p);
+static Node *parse_match(Parser *p);
 
 /* ---------- types (captured as a printed string, not a sub-AST yet) ---------- */
 
@@ -134,11 +135,42 @@ static Node *parse_primary(Parser *p) {
             consume(p, TOK_RPAREN, "expected ')' after expression");
             return inner;
         }
+        case TOK_MATCH:
+            return parse_match(p);
         default:
             error_at(p, t, "expected an expression");
             advance(p);
             return new_node(NODE_LITERAL, t.line);  /* error placeholder */
     }
+}
+
+/* match subject { pattern -> expr ... } ; patterns: _ | literal | binding */
+static Node *parse_match(Parser *p) {
+    consume(p, TOK_MATCH, "expected 'match'");
+    Node *n = new_node(NODE_MATCH, p->previous.line);
+    n->as.match.subject = parse_expression(p);
+    nodelist_init(&n->as.match.arms);
+    consume(p, TOK_LBRACE, "expected '{' after match subject");
+    while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        Node *arm = new_node(NODE_MATCH_ARM, p->current.line);
+        arm->as.match_arm.kind = 0;
+        arm->as.match_arm.literal = NULL;
+        arm->as.match_arm.bind = NULL;
+        if (check(p, TOK_IDENT)) {
+            char *name = token_text(p->current);
+            if (strcmp(name, "_") == 0) arm->as.match_arm.kind = 0;       /* wildcard */
+            else { arm->as.match_arm.kind = 2; arm->as.match_arm.bind = name; }  /* binding */
+            advance(p);
+        } else {
+            arm->as.match_arm.kind = 1;                                   /* literal */
+            arm->as.match_arm.literal = parse_primary(p);
+        }
+        consume(p, TOK_ARROW, "expected '->' in match arm");
+        arm->as.match_arm.body = parse_expression(p);
+        nodelist_push(&n->as.match.arms, arm);
+    }
+    consume(p, TOK_RBRACE, "expected '}' to close match");
+    return n;
 }
 
 /* postfix: calls f(...), member access .x / ?.x */
@@ -222,8 +254,20 @@ static Node *parse_binary(Parser *p, int min_prec) {
     return left;
 }
 
-static Node *parse_assignment(Parser *p) {
+/* range = binary [ ".." binary ] */
+static Node *parse_range(Parser *p) {
     Node *left = parse_binary(p, 1);
+    if (match_tok(p, TOK_DOTDOT)) {
+        Node *n = new_node(NODE_RANGE, p->previous.line);
+        n->as.range.start = left;
+        n->as.range.end = parse_binary(p, 1);
+        return n;
+    }
+    return left;
+}
+
+static Node *parse_assignment(Parser *p) {
+    Node *left = parse_range(p);
     if (check(p, TOK_ASSIGN) || check(p, TOK_PLUS_EQ) || check(p, TOK_MINUS_EQ)) {
         TokenType opt = p->current.type;
         int line = p->current.line;
@@ -409,10 +453,45 @@ static Node *parse_statement(Parser *p) {
         return n;
     }
     if (match_tok(p, TOK_IF)) return parse_if(p);
+    if (match_tok(p, TOK_WHILE)) {
+        Node *n = new_node(NODE_WHILE, p->previous.line);
+        n->as.while_stmt.cond = parse_expression(p);
+        n->as.while_stmt.body = parse_block(p);
+        return n;
+    }
+    if (match_tok(p, TOK_FOR)) {
+        Node *n = new_node(NODE_FOR, p->previous.line);
+        n->as.for_stmt.var_name = token_text(p->current);
+        consume(p, TOK_IDENT, "expected loop variable name");
+        consume(p, TOK_IN, "expected 'in' after loop variable");
+        n->as.for_stmt.iterable = parse_expression(p);
+        n->as.for_stmt.body = parse_block(p);
+        return n;
+    }
     if (check(p, TOK_LBRACE)) return parse_block(p);
 
     Node *n = new_node(NODE_EXPR_STMT, p->current.line);
     n->as.expr_stmt.expr = parse_expression(p);
+    return n;
+}
+
+/* structDecl = "struct" IDENT "{" { [let|var] IDENT ":" type } "}" */
+static Node *parse_struct(Parser *p) {
+    Node *n = new_node(NODE_STRUCT, p->previous.line);
+    n->as.struct_decl.name = token_text(p->current);
+    consume(p, TOK_IDENT, "expected struct name");
+    consume(p, TOK_LBRACE, "expected '{' after struct name");
+    nodelist_init(&n->as.struct_decl.fields);
+    while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        if (check(p, TOK_LET) || check(p, TOK_VAR)) advance(p);  /* optional */
+        Node *field = new_node(NODE_PARAM, p->current.line);
+        field->as.param.name = token_text(p->current);
+        consume(p, TOK_IDENT, "expected field name");
+        consume(p, TOK_COLON, "expected ':' after field name");
+        field->as.param.param_type = parse_type(p);
+        nodelist_push(&n->as.struct_decl.fields, field);
+    }
+    consume(p, TOK_RBRACE, "expected '}' to close struct");
     return n;
 }
 
@@ -433,6 +512,7 @@ static Node *parse_declaration(Parser *p) {
     if (match_tok(p, TOK_LET))  return parse_var_decl(p, 0);
     if (match_tok(p, TOK_VAR))  return parse_var_decl(p, 1);
     if (match_tok(p, TOK_FN))   return parse_fn_decl(p, 0);
+    if (match_tok(p, TOK_STRUCT)) return parse_struct(p);
     if (match_tok(p, TOK_COMPONENT)) return parse_component(p);
     if (match_tok(p, TOK_ASYNC)) {
         consume(p, TOK_FN, "expected 'fn' after 'async'");

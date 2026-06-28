@@ -1,0 +1,43 @@
+// features.aby — while loops, for/range, structs, and match.
+
+struct Point {
+    let x: Int
+    let y: Int
+}
+
+fn name_of(n: Int) -> String {
+    return match n {
+        0 -> "zero"
+        1 -> "one"
+        2 -> "two"
+        _ -> "many"
+    }
+}
+
+fn main() {
+    // while loop
+    var i = 0
+    var sum = 0
+    while i < 5 {
+        sum += i
+        i += 1
+    }
+    print("sum of 0..4 (while) =", sum)
+
+    // for loop over a range (end exclusive)
+    var product = 1
+    for k in 1..6 {
+        product = product * k
+    }
+    print("5! (for 1..6)      =", product)
+
+    // structs: construct, read, and mutate a field
+    var p = Point(3, 4)
+    print("point              =", p)
+    print("p.x + p.y          =", p.x + p.y)
+    p.x = 10
+    print("after p.x = 10     =", p)
+
+    // match expression
+    print("names:", name_of(0), name_of(1), name_of(2), name_of(9))
+}

@@ -12,6 +12,9 @@ typedef enum {
     NODE_ASSIGN,     /* target op value   (= += -=)        */
     NODE_CALL,       /* callee(args...)                    */
     NODE_GET,        /* object.name  or  object?.name      */
+    NODE_RANGE,      /* start .. end                       */
+    NODE_MATCH,      /* match subject { arms }             */
+    NODE_MATCH_ARM,  /* pattern -> body                    */
     /* declarations / statements */
     NODE_IMPORT,     /* import "path" [as name]            */
     NODE_VAR_DECL,   /* let/var name: type = init          */
@@ -19,6 +22,9 @@ typedef enum {
     NODE_PARAM,      /* name: type                         */
     NODE_RETURN,     /* return value?                      */
     NODE_IF,         /* if cond { then } else { else }      */
+    NODE_WHILE,      /* while cond { body }                */
+    NODE_FOR,        /* for name in iterable { body }       */
+    NODE_STRUCT,     /* struct Name { fields }             */
     NODE_BLOCK,      /* { statements }                     */
     NODE_EXPR_STMT,  /* an expression used as a statement   */
     /* UI / reactive constructs (the signature feature) */
@@ -50,6 +56,10 @@ struct Node {
         struct { char *op; Node *target; Node *value; } assign;
         struct { Node *callee; NodeList args; } call;
         struct { Node *object; char *name; int safe; } get;  /* safe = ?. */
+        struct { Node *start; Node *end; } range;
+        struct { Node *subject; NodeList arms; } match;
+        /* arm: kind 0=wildcard, 1=literal, 2=binding(name) */
+        struct { int kind; Node *literal; char *bind; Node *body; } match_arm;
         struct { char *path; char *alias; } import;   /* alias may be NULL */
         struct { int is_mutable; char *name; char *decl_type; Node *init; } var_decl;
         struct { int is_async; char *name; NodeList params;
@@ -57,6 +67,9 @@ struct Node {
         struct { char *name; char *param_type; } param;
         struct { Node *value; } ret;                          /* value may be NULL */
         struct { Node *cond; Node *then_branch; Node *else_branch; } if_stmt;
+        struct { Node *cond; Node *body; } while_stmt;
+        struct { char *var_name; Node *iterable; Node *body; } for_stmt;
+        struct { char *name; NodeList fields; } struct_decl;  /* fields = NODE_PARAM */
         struct { NodeList statements; } block;
         struct { Node *expr; } expr_stmt;
         struct { char *name; NodeList members; Node *render_body; } component;

@@ -119,6 +119,40 @@ static void print_node(Node *n, int depth) {
                 print_node(n->as.if_stmt.else_branch, depth + 2);
             }
             break;
+        case NODE_WHILE:
+            printf("While\n");
+            indent(depth + 1); printf("cond:\n");
+            print_node(n->as.while_stmt.cond, depth + 2);
+            indent(depth + 1); printf("body:\n");
+            print_node(n->as.while_stmt.body, depth + 2);
+            break;
+        case NODE_FOR:
+            printf("For %s in\n", n->as.for_stmt.var_name);
+            print_node(n->as.for_stmt.iterable, depth + 1);
+            indent(depth + 1); printf("body:\n");
+            print_node(n->as.for_stmt.body, depth + 2);
+            break;
+        case NODE_STRUCT:
+            printf("Struct %s\n", n->as.struct_decl.name);
+            print_list(&n->as.struct_decl.fields, depth + 1);
+            break;
+        case NODE_RANGE:
+            printf("Range\n");
+            print_node(n->as.range.start, depth + 1);
+            print_node(n->as.range.end, depth + 1);
+            break;
+        case NODE_MATCH:
+            printf("Match\n");
+            indent(depth + 1); printf("subject:\n");
+            print_node(n->as.match.subject, depth + 2);
+            print_list(&n->as.match.arms, depth + 1);
+            break;
+        case NODE_MATCH_ARM:
+            if (n->as.match_arm.kind == 0) printf("Arm _ ->\n");
+            else if (n->as.match_arm.kind == 2) printf("Arm bind %s ->\n", n->as.match_arm.bind);
+            else { printf("Arm literal ->\n"); print_node(n->as.match_arm.literal, depth + 1); }
+            print_node(n->as.match_arm.body, depth + 1);
+            break;
         case NODE_BLOCK:
             printf("Block\n");
             print_list(&n->as.block.statements, depth + 1);

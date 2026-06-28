@@ -52,6 +52,15 @@ static int env_assign(Env *e, const char *name, Value v) {
     return 0;
 }
 
+/* ---------- struct instances ---------- */
+
+struct Instance {
+    Node *decl;        /* NODE_STRUCT */
+    char **names;
+    Value *values;
+    int count;
+};
+
 /* ---------- value helpers ---------- */
 
 static Value v_nil(void)            { Value v; v.type = VAL_NIL; return v; }
@@ -61,6 +70,9 @@ static Value v_float(double f)      { Value v; v.type = VAL_FLOAT; v.as.floating
 static Value v_string(char *s)      { Value v; v.type = VAL_STRING; v.as.string = s; return v; }
 static Value v_fn(Node *decl)       { Value v; v.type = VAL_FN; v.as.fn.decl = decl; return v; }
 static Value v_native(NativeFn fn)  { Value v; v.type = VAL_NATIVE; v.as.native = fn; return v; }
+static Value v_struct_def(Node *d)  { Value v; v.type = VAL_STRUCT_DEF; v.as.struct_def.decl = d; return v; }
+static Value v_instance(Instance *i){ Value v; v.type = VAL_INSTANCE; v.as.instance = i; return v; }
+static Value v_range(long long a, long long b) { Value v; v.type = VAL_RANGE; v.as.range.start = a; v.as.range.end = b; return v; }
 
 static int is_num(Value v)   { return v.type == VAL_INT || v.type == VAL_FLOAT; }
 static double as_num(Value v){ return v.type == VAL_INT ? (double)v.as.integer : v.as.floating; }
@@ -94,6 +106,19 @@ static void print_value(Value v) {
         case VAL_STRING: printf("%s", v.as.string); break;
         case VAL_FN:     printf("<fn %s>", v.as.fn.decl->as.fn_decl.name); break;
         case VAL_NATIVE: printf("<native fn>"); break;
+        case VAL_STRUCT_DEF: printf("<struct %s>", v.as.struct_def.decl->as.struct_decl.name); break;
+        case VAL_RANGE:  printf("%lld..%lld", v.as.range.start, v.as.range.end); break;
+        case VAL_INSTANCE: {
+            Instance *in = v.as.instance;
+            printf("%s { ", in->decl->as.struct_decl.name);
+            for (int i = 0; i < in->count; i++) {
+                if (i) printf(", ");
+                printf("%s: ", in->names[i]);
+                print_value(in->values[i]);
+            }
+            printf(" }");
+            break;
+        }
     }
 }
 
@@ -225,6 +250,23 @@ static Value apply_binary(const char *op, Value l, Value r) {
 
 static Value call_value(Value callee, Value *argv, int argc) {
     if (callee.type == VAL_NATIVE) return callee.as.native(argc, argv);
+    if (callee.type == VAL_STRUCT_DEF) {     /* construct an instance */
+        Node *decl = callee.as.struct_def.decl;
+        NodeList *fields = &decl->as.struct_decl.fields;
+        if (argc != fields->count)
+            runtime_error("struct '%s' expects %d field(s), got %d",
+                          decl->as.struct_decl.name, fields->count, argc);
+        Instance *in = (Instance *)malloc(sizeof(Instance));
+        in->decl = decl;
+        in->count = fields->count;
+        in->names = (char **)malloc(sizeof(char *) * (in->count ? in->count : 1));
+        in->values = (Value *)malloc(sizeof(Value) * (in->count ? in->count : 1));
+        for (int i = 0; i < argc; i++) {
+            in->names[i] = fields->items[i]->as.param.name;
+            in->values[i] = argv[i];
+        }
+        return v_instance(in);
+    }
     if (callee.type == VAL_FN) {
         Node *decl = callee.as.fn.decl;
         NodeList *params = &decl->as.fn_decl.params;
@@ -304,11 +346,32 @@ static Value eval(Node *n, Env *env) {
             return apply_binary(op, l, r);
         }
         case NODE_ASSIGN: {
-            if (n->as.assign.target->type != NODE_IDENT)
-                runtime_error("can only assign to a variable");
-            const char *name = n->as.assign.target->as.ident.name;
+            Node *target = n->as.assign.target;
             Value value = eval(n->as.assign.value, env);
             const char *op = n->as.assign.op;
+
+            if (target->type == NODE_GET) {           /* field assignment */
+                Value obj = eval(target->as.get.object, env);
+                if (obj.type != VAL_INSTANCE)
+                    runtime_error("cannot assign field of a non-struct value");
+                Instance *in = obj.as.instance;
+                for (int i = 0; i < in->count; i++) {
+                    if (strcmp(in->names[i], target->as.get.name) == 0) {
+                        if (op[0] != '=') {
+                            char binop[2] = { op[0], '\0' };
+                            value = apply_binary(binop, in->values[i], value);
+                        }
+                        in->values[i] = value;
+                        return value;
+                    }
+                }
+                runtime_error("struct '%s' has no field '%s'",
+                              in->decl->as.struct_decl.name, target->as.get.name);
+            }
+
+            if (target->type != NODE_IDENT)
+                runtime_error("can only assign to a variable or field");
+            const char *name = target->as.ident.name;
             if (op[0] != '=') {  /* += or -= */
                 Value cur;
                 if (!env_get(env, name, &cur))
@@ -332,7 +395,40 @@ static Value eval(Node *n, Env *env) {
         case NODE_GET: {
             Value obj = eval(n->as.get.object, env);
             if (n->as.get.safe && obj.type == VAL_NIL) return v_nil();
-            runtime_error("field access is not supported yet (no structs at runtime)");
+            if (obj.type != VAL_INSTANCE)
+                runtime_error("cannot read field '%s' of a non-struct value", n->as.get.name);
+            Instance *in = obj.as.instance;
+            for (int i = 0; i < in->count; i++)
+                if (strcmp(in->names[i], n->as.get.name) == 0) return in->values[i];
+            runtime_error("struct '%s' has no field '%s'",
+                          in->decl->as.struct_decl.name, n->as.get.name);
+            return v_nil();
+        }
+        case NODE_RANGE: {
+            Value a = eval(n->as.range.start, env);
+            Value b = eval(n->as.range.end, env);
+            if (a.type != VAL_INT || b.type != VAL_INT)
+                runtime_error("range bounds must be integers");
+            return v_range(a.as.integer, b.as.integer);
+        }
+        case NODE_MATCH: {
+            Value subject = eval(n->as.match.subject, env);
+            NodeList *arms = &n->as.match.arms;
+            for (int i = 0; i < arms->count; i++) {
+                Node *arm = arms->items[i];
+                if (arm->as.match_arm.kind == 0) {              /* wildcard */
+                    return eval(arm->as.match_arm.body, env);
+                } else if (arm->as.match_arm.kind == 2) {       /* binding */
+                    Env *scope = env_new(env);
+                    env_define(scope, arm->as.match_arm.bind, subject);
+                    return eval(arm->as.match_arm.body, scope);
+                } else {                                        /* literal */
+                    Value lit = eval(arm->as.match_arm.literal, env);
+                    if (values_equal(subject, lit))
+                        return eval(arm->as.match_arm.body, env);
+                }
+            }
+            runtime_error("no match arm matched");
             return v_nil();
         }
         default:
@@ -368,6 +464,24 @@ static ExecStatus exec(Node *n, Env *env, Value *ret) {
             if (n->as.if_stmt.else_branch)
                 return exec(n->as.if_stmt.else_branch, env, ret);
             return EXEC_NORMAL;
+        case NODE_WHILE:
+            while (is_truthy(eval(n->as.while_stmt.cond, env))) {
+                if (exec(n->as.while_stmt.body, env, ret) == EXEC_RETURN)
+                    return EXEC_RETURN;
+            }
+            return EXEC_NORMAL;
+        case NODE_FOR: {
+            Value it = eval(n->as.for_stmt.iterable, env);
+            if (it.type != VAL_RANGE)
+                runtime_error("'for ... in' currently requires a range (e.g. 0..10)");
+            for (long long k = it.as.range.start; k < it.as.range.end; k++) {
+                Env *scope = env_new(env);
+                env_define(scope, n->as.for_stmt.var_name, v_int(k));
+                if (exec(n->as.for_stmt.body, scope, ret) == EXEC_RETURN)
+                    return EXEC_RETURN;
+            }
+            return EXEC_NORMAL;
+        }
         case NODE_EXPR_STMT:
             eval(n->as.expr_stmt.expr, env);
             return EXEC_NORMAL;
@@ -388,6 +502,8 @@ int interpret(Node *program) {
         Node *d = decls->items[i];
         if (d->type == NODE_FN_DECL) {
             env_define(g_global, d->as.fn_decl.name, v_fn(d));
+        } else if (d->type == NODE_STRUCT) {
+            env_define(g_global, d->as.struct_decl.name, v_struct_def(d));
         } else if (d->type == NODE_VAR_DECL) {
             Value v = d->as.var_decl.init ? eval(d->as.var_decl.init, g_global) : v_nil();
             env_define(g_global, d->as.var_decl.name, v);
