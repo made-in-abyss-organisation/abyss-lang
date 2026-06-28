@@ -12,6 +12,7 @@
 #include "interp.h"
 #include "lexer.h"
 #include "parser.h"
+#include "tc.h"
 
 static char *read_file(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -51,15 +52,16 @@ static void dump_tokens(const char *source) {
 
 int main(int argc, char *argv[]) {
     const char *path = NULL;
-    int mode_tokens = 0, mode_ast = 0;
+    int mode_tokens = 0, mode_ast = 0, no_check = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--tokens") == 0) mode_tokens = 1;
         else if (strcmp(argv[i], "--ast") == 0) mode_ast = 1;
+        else if (strcmp(argv[i], "--no-check") == 0) no_check = 1;
         else path = argv[i];
     }
     if (!path) {
-        fprintf(stderr, "usage: abyssc [--ast|--tokens] <file.aby>\n");
+        fprintf(stderr, "usage: abyssc [--ast|--tokens|--no-check] <file.aby>\n");
         return 64;
     }
 
@@ -79,10 +81,22 @@ int main(int argc, char *argv[]) {
         return 65;
     }
 
-    int code = 0;
-    if (mode_ast) ast_print(program);
-    else          code = interpret(program);
+    if (mode_ast) {
+        ast_print(program);
+        free(source);
+        return 0;
+    }
 
+    if (!no_check) {
+        int errs = typecheck(program);
+        if (errs > 0) {
+            fprintf(stderr, "abyssc: %d type error(s); not running.\n", errs);
+            free(source);
+            return 65;
+        }
+    }
+
+    int code = interpret(program);
     free(source);
     return code;
 }

@@ -9,7 +9,7 @@ you make it fast; make it fast before you make it pretty.*
 | 0 | **Specification** | Grammar + semantics written down (`docs/SPEC.md`). |
 | 1 | **Front-end (Lexer + Parser)** | `abyssc` reads `.aby` → tokens → AST. ← *lexer + core parser done; UI-tree/struct/match next* |
 | 2 | **Tree-walking interpreter** | Programs run: vars, arithmetic, recursion, `if`, `while`, `for`/ranges, `struct`, `match`, `print`, string interpolation. ← *done* |
-| 3 | **Type checker** | Static analysis: type inference, null-safety, immutability — bad programs rejected with clear errors. |
+| 3 | **Type checker** | Static analysis: type inference, arg/field/return checks, Bool conditions — bad programs rejected with clear errors. ← *done (null-safety/immutability still TODO)* |
 | 4 | **Backend (transpile to C)** | Emit C, compile with clang → native ARM executable. |
 | 5 | **Runtime + stdlib** | ARC memory management, `String`/`List`/`Map`, async runtime. |
 | 6 | **Mobile layer** | Bind Skia; widget framework; `state` → re-render. `Counter` runs on a real Android device. |

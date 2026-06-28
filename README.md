@@ -34,15 +34,16 @@ component Counter {
 
 ## Status
 
-🚧 **Phase 2 — Abyss runs.** A tree-walking interpreter executes real programs:
-variables and scopes, arithmetic with correct precedence, comparisons,
-`&&`/`||`/`??`, `if`/`else`, **`while` and `for`/range loops**, **recursive
-functions**, **`struct`s** (construct, read, mutate fields), **`match`
-expressions**, string concatenation and `${...}` interpolation, and a built-in
-`print`. The front-end also parses the **`component`/`state`/`render` UI tree** —
-though UI rendering waits for the mobile phase. Next: a type checker, then a
-native backend. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and
-[`docs/SPEC.md`](docs/SPEC.md).
+🚧 **Phase 3 — Type-checked & running.** Programs are **statically type-checked
+before they run** (`Int + String`, wrong arg/field counts, non-`Bool`
+conditions, unknown fields, return-type mismatches, undefined names — all caught
+with line numbers; use `--no-check` to skip). The interpreter then executes:
+variables and scopes, arithmetic, `&&`/`||`/`??`, `if`/`else`, **`while` and
+`for`/range loops**, **recursion**, **`struct`s** (construct, read, mutate),
+**`match`**, string concat and `${...}` interpolation, and `print`. The
+front-end also parses the **`component`/`state`/`render` UI tree** — UI rendering
+waits for the mobile phase. Next: a native backend. See
+[`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Build & run
 
