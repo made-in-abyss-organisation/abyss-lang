@@ -21,6 +21,7 @@ static int g_fn_ret;       /* CgTy the current function returns */
 
 static int gen_expr(Node *n, FILE *o);            /* returns the CgTy it emitted */
 static void gen_expr_as(Node *n, int want, FILE *o);
+static int gen_match(Node *n, FILE *o);
 static void gen_stmt(Node *n, FILE *o, int ind);
 
 static void indent(FILE *o, int n) { for (int i = 0; i < n; i++) fputs("    ", o); }
@@ -47,6 +48,15 @@ static Node *find_fn(const char *name) {
     return NULL;
 }
 
+static Node *find_struct(const char *name) {
+    NodeList *d = &g_program->as.program.declarations;
+    for (int i = 0; i < d->count; i++)
+        if (d->items[i]->type == NODE_STRUCT &&
+            strcmp(d->items[i]->as.struct_decl.name, name) == 0)
+            return d->items[i];
+    return NULL;
+}
+
 /* Each parameter and the return are typed INDEPENDENTLY: a scalar param/return
  * is native (cty -> long long/double/_Bool), anything else is AV. Storage uses
  * cty(), uses report norm() — consistent for every type, so native and boxed
@@ -59,8 +69,10 @@ static void gen_prelude(FILE *o) {
     fputs("#include <stdlib.h>\n", o);
     fputs("#include <string.h>\n", o);
     fputs("#include <stdarg.h>\n\n", o);
-    fputs("typedef enum { AV_NIL, AV_BOOL, AV_INT, AV_FLOAT, AV_STR } AVKind;\n", o);
-    fputs("typedef struct { AVKind k; union { long long i; double f; int b; const char *s; } u; } AV;\n\n", o);
+    fputs("typedef enum { AV_NIL, AV_BOOL, AV_INT, AV_FLOAT, AV_STR, AV_STRUCT } AVKind;\n", o);
+    fputs("typedef struct AObj AObj;\n", o);
+    fputs("typedef struct { AVKind k; union { long long i; double f; int b; const char *s; AObj *o; } u; } AV;\n", o);
+    fputs("struct AObj { const char *name; int n; const char **names; AV *vals; };\n\n", o);
     fputs("static AV av_nil(void){ AV v; v.k=AV_NIL; v.u.i=0; return v; }\n", o);
     fputs("static AV av_int(long long i){ AV v; v.k=AV_INT; v.u.i=i; return v; }\n", o);
     fputs("static AV av_inti(int i){ AV v; v.k=AV_INT; v.u.i=i; return v; }\n", o);
@@ -68,6 +80,11 @@ static void gen_prelude(FILE *o) {
     fputs("static AV av_bool(int b){ AV v; v.k=AV_BOOL; v.u.b=b; return v; }\n", o);
     fputs("static AV av_str(const char *s){ AV v; v.k=AV_STR; v.u.s=s; return v; }\n", o);
     fputs("static AV av_id(AV v){ return v; }\n", o);
+    /* struct instances: a heap object carrying its type name + named fields.
+     * Reference semantics (the AV holds a pointer), matching the interpreter. */
+    fputs("static AV av_obj(const char *name, int n, const char **names, AV *vals){ AObj *o=malloc(sizeof(AObj)); o->name=name; o->n=n; o->names=malloc(sizeof(char*)*(n?n:1)); o->vals=malloc(sizeof(AV)*(n?n:1)); for(int i=0;i<n;i++){ o->names[i]=names[i]; o->vals[i]=vals[i]; } AV v; v.k=AV_STRUCT; v.u.o=o; return v; }\n", o);
+    fputs("static AV av_get(AV v, const char *name, int safe){ if(safe&&v.k==AV_NIL)return av_nil(); if(v.k!=AV_STRUCT){ fprintf(stderr,\"abyss runtime error: cannot read field '%s' of a non-struct value\\n\",name); exit(70);} AObj *o=v.u.o; for(int i=0;i<o->n;i++) if(strcmp(o->names[i],name)==0) return o->vals[i]; fprintf(stderr,\"abyss runtime error: struct '%s' has no field '%s'\\n\",o->name,name); exit(70); }\n", o);
+    fputs("static AV av_set(AV v, const char *name, AV val){ if(v.k!=AV_STRUCT){ fprintf(stderr,\"abyss runtime error: cannot assign field of a non-struct value\\n\"); exit(70);} AObj *o=v.u.o; for(int i=0;i<o->n;i++) if(strcmp(o->names[i],name)==0){ o->vals[i]=val; return val; } fprintf(stderr,\"abyss runtime error: struct '%s' has no field '%s'\\n\",o->name,name); exit(70); }\n", o);
     /* AV_OF: box any scalar C value (used by string interpolation) */
     fputs("#define AV_OF(x) _Generic((x), AV: av_id, _Bool: av_bool, long long: av_int, "
           "int: av_inti, double: av_float, const char *: av_str, char *: av_str)(x)\n", o);
@@ -92,8 +109,8 @@ static void gen_prelude(FILE *o) {
     fputs("static AV av_neg(AV a){ if(a.k==AV_INT)return av_int(-a.u.i); return av_float(-av_num(a)); }\n", o);
     fputs("static AV av_not(AV a){ return av_bool(!av_truthy(a)); }\n", o);
     fputs("static AV av_coalesce(AV a, AV b){ return a.k==AV_NIL?b:a; }\n", o);
-    fputs("static AV av_tostr(AV v){ if(v.k==AV_STR)return v; char buf[64]; if(v.k==AV_INT)snprintf(buf,sizeof buf,\"%lld\",v.u.i); else if(v.k==AV_FLOAT)snprintf(buf,sizeof buf,\"%g\",v.u.f); else if(v.k==AV_BOOL)snprintf(buf,sizeof buf,\"%s\",v.u.b?\"true\":\"false\"); else snprintf(buf,sizeof buf,\"nil\"); char *s=malloc(strlen(buf)+1); strcpy(s,buf); return av_str(s); }\n", o);
-    fputs("static void av_print1(AV v){ if(v.k==AV_NIL)printf(\"nil\"); else if(v.k==AV_BOOL)printf(\"%s\",v.u.b?\"true\":\"false\"); else if(v.k==AV_INT)printf(\"%lld\",v.u.i); else if(v.k==AV_FLOAT)printf(\"%g\",v.u.f); else if(v.k==AV_STR)printf(\"%s\",v.u.s); }\n", o);
+    fputs("static AV av_tostr(AV v){ if(v.k==AV_STR)return v; if(v.k==AV_STRUCT)return av_str(\"<fn>\"); char buf[64]; if(v.k==AV_INT)snprintf(buf,sizeof buf,\"%lld\",v.u.i); else if(v.k==AV_FLOAT)snprintf(buf,sizeof buf,\"%g\",v.u.f); else if(v.k==AV_BOOL)snprintf(buf,sizeof buf,\"%s\",v.u.b?\"true\":\"false\"); else snprintf(buf,sizeof buf,\"nil\"); char *s=malloc(strlen(buf)+1); strcpy(s,buf); return av_str(s); }\n", o);
+    fputs("static void av_print1(AV v){ if(v.k==AV_NIL)printf(\"nil\"); else if(v.k==AV_BOOL)printf(\"%s\",v.u.b?\"true\":\"false\"); else if(v.k==AV_INT)printf(\"%lld\",v.u.i); else if(v.k==AV_FLOAT)printf(\"%g\",v.u.f); else if(v.k==AV_STR)printf(\"%s\",v.u.s); else if(v.k==AV_STRUCT){ AObj *o=v.u.o; printf(\"%s { \",o->name); for(int i=0;i<o->n;i++){ if(i)printf(\", \"); printf(\"%s: \",o->names[i]); av_print1(o->vals[i]); } printf(\" }\"); } }\n", o);
     fputs("static AV av_print(int n, ...){ va_list ap; va_start(ap,n); for(int i=0;i<n;i++){ if(i)printf(\" \"); AV v=va_arg(ap,AV); av_print1(v);} va_end(ap); printf(\"\\n\"); return av_nil(); }\n\n", o);
 }
 
@@ -317,6 +334,62 @@ static int gen_binary(Node *n, FILE *o) {
     return CG_OTHER;
 }
 
+/* Lower a `match` expression to a statement-expression: capture the subject
+ * once, then an if/else-if chain over the arms (matching the interpreter's
+ * first-arm-wins order). A binding or wildcard arm always matches, so it
+ * terminates the chain as the trailing `else`; arms after it are unreachable
+ * (exactly as in the interpreter). Result is boxed to AV (arms may differ in
+ * type), so a match expression's CgTy is CG_OTHER. */
+static int gen_match(Node *n, FILE *o) {
+    int id = g_tmp++;
+    int sty = norm(expr_cgty(n->as.match.subject));   /* subject's emitted repr */
+    fprintf(o, "({ AV _m%d = ", id);
+    gen_expr_as(n->as.match.subject, CG_OTHER, o);
+    fprintf(o, "; AV _r%d = av_nil(); ", id);
+
+    NodeList *arms = &n->as.match.arms;
+    int terminated = 0, emitted = 0;
+    for (int i = 0; i < arms->count && !terminated; i++) {
+        Node *arm = arms->items[i];
+        int kind = arm->as.match_arm.kind;
+        if (kind == 1) {                       /* literal pattern */
+            if (emitted) fputs("else ", o);
+            fprintf(o, "if (av_truthy(av_eq(_m%d, ", id);
+            gen_expr_as(arm->as.match_arm.literal, CG_OTHER, o);
+            fprintf(o, "))) { _r%d = ", id);
+            gen_expr_as(arm->as.match_arm.body, CG_OTHER, o);
+            fputs("; } ", o);
+            emitted = 1;
+        } else if (kind == 2) {                /* binding pattern (always matches) */
+            if (emitted) fputs("else ", o);
+            fputs("{ ", o);
+            if (is_native(sty)) {              /* bind storage mirrors subject repr */
+                const char *unbox = sty == CG_INT ? "av_as_int"
+                                  : sty == CG_FLOAT ? "av_num" : "av_truthy";
+                fprintf(o, "%s a_%s = %s(_m%d); ", cty(sty), arm->as.match_arm.bind, unbox, id);
+            } else {
+                fprintf(o, "AV a_%s = _m%d; ", arm->as.match_arm.bind, id);
+            }
+            fprintf(o, "_r%d = ", id);
+            gen_expr_as(arm->as.match_arm.body, CG_OTHER, o);
+            fputs("; } ", o);
+            terminated = 1;
+        } else {                               /* wildcard (always matches) */
+            if (emitted) fputs("else ", o);
+            fprintf(o, "{ _r%d = ", id);
+            gen_expr_as(arm->as.match_arm.body, CG_OTHER, o);
+            fputs("; } ", o);
+            terminated = 1;
+        }
+    }
+    if (!terminated) {
+        if (emitted) fputs("else ", o);
+        fputs("{ fprintf(stderr, \"abyss runtime error: no match arm matched\\n\"); exit(70); } ", o);
+    }
+    fprintf(o, "_r%d; })", id);
+    return CG_OTHER;
+}
+
 static int gen_expr(Node *n, FILE *o) {
     switch (n->type) {
         case NODE_LITERAL:
@@ -347,6 +420,23 @@ static int gen_expr(Node *n, FILE *o) {
             return gen_binary(n, o);
         case NODE_ASSIGN: {
             Node *tgt = n->as.assign.target;
+            if (tgt->type == NODE_GET) {             /* field assignment: p.x = v */
+                const char *fname = tgt->as.get.name;
+                const char *aop = n->as.assign.op;
+                if (aop[0] == '=') {
+                    fputs("av_set(", o); gen_expr_as(tgt->as.get.object, CG_OTHER, o);
+                    fprintf(o, ", \"%s\", ", fname);
+                    gen_expr_as(n->as.assign.value, CG_OTHER, o); fputc(')', o);
+                    return CG_OTHER;
+                }
+                /* compound p.x += v : evaluate the object once (statement-expr) */
+                int id = g_tmp++;
+                const char *afn = aop[0] == '+' ? "av_add" : "av_sub";
+                fprintf(o, "({ AV _s%d = ", id); gen_expr_as(tgt->as.get.object, CG_OTHER, o);
+                fprintf(o, "; av_set(_s%d, \"%s\", %s(av_get(_s%d, \"%s\", 0), ", id, fname, afn, id, fname);
+                gen_expr_as(n->as.assign.value, CG_OTHER, o); fputs(")); })", o);
+                return CG_OTHER;
+            }
             if (tgt->type != NODE_IDENT) { g_unsupported++; fputs("av_nil()", o); return CG_OTHER; }
             const char *name = tgt->as.ident.name;
             const char *op = n->as.assign.op;
@@ -376,7 +466,26 @@ static int gen_expr(Node *n, FILE *o) {
             }
             if (callee->type == NODE_IDENT) {
                 Node *fn = find_fn(callee->as.ident.name);
-                if (!fn) {   /* struct constructor or other non-fn: not in backend yet */
+                if (!fn) {
+                    Node *st = find_struct(callee->as.ident.name);
+                    if (st) {   /* struct constructor: Point(3, 4) */
+                        NodeList *fs = &st->as.struct_decl.fields;
+                        int cnt = args->count;
+                        fprintf(o, "av_obj(\"%s\", %d, ", st->as.struct_decl.name, cnt);
+                        if (cnt == 0) { fputs("NULL, NULL)", o); return CG_OTHER; }
+                        fputs("(const char*[]){", o);
+                        for (int i = 0; i < cnt; i++) {
+                            if (i) fputs(", ", o);
+                            fprintf(o, "\"%s\"", i < fs->count ? fs->items[i]->as.param.name : "?");
+                        }
+                        fputs("}, (AV[]){", o);
+                        for (int i = 0; i < cnt; i++) {
+                            if (i) fputs(", ", o);
+                            gen_expr_as(args->items[i], CG_OTHER, o);
+                        }
+                        fputs("})", o);
+                        return CG_OTHER;
+                    }
                     g_unsupported++; fputs("av_nil()", o); return CG_OTHER;
                 }
                 fprintf(o, "af_%s(", callee->as.ident.name);
@@ -391,7 +500,13 @@ static int gen_expr(Node *n, FILE *o) {
             }
             g_unsupported++; fputs("av_nil()", o); return CG_OTHER;
         }
-        default:  /* GET, RANGE, MATCH as a value: not yet supported by backend */
+        case NODE_GET:
+            fputs("av_get(", o); gen_expr_as(n->as.get.object, CG_OTHER, o);
+            fprintf(o, ", \"%s\", %d)", n->as.get.name, n->as.get.safe ? 1 : 0);
+            return CG_OTHER;
+        case NODE_MATCH:
+            return gen_match(n, o);
+        default:  /* RANGE as a bare value, etc.: not supported by the backend */
             g_unsupported++;
             fputs("av_nil()", o);
             return CG_OTHER;

@@ -51,8 +51,10 @@ numbers; `--no-check` skips). Language: variables/scopes, arithmetic,
 `&&`/`||`/`??`, `if`/`else`, `while` and `for`/range loops, recursion,
 `struct`s, `match`, string concat and `${...}` interpolation, `print`. The
 front-end also parses the `component`/`state`/`render` UI tree. (The C backend
-covers functions, control flow, arithmetic, strings and `print`; `struct`/`match`
-run in the interpreter and are next for the backend.) See
+now covers everything the interpreter runs — functions, control flow,
+arithmetic, strings, `print`, `struct`s and `match` — kept honest by a
+differential test harness that builds on macOS, Linux **and Windows** and
+asserts the interpreter and native binary print identical output.) See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Build & run

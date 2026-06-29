@@ -8,10 +8,13 @@ fuzzed (see the adversarial test pass); they agree on all tested programs
 ## Backend coverage
 
 - The C backend compiles functions, control flow, arithmetic, comparisons,
-  `&&`/`||`/`??`, strings + `${}` interpolation, and `print`. **`struct` and
-  `match` are interpreter-only** — the backend emits an `av_nil()` placeholder
-  and prints a `warning: N construct(s) not yet supported`. Run such programs
-  with the interpreter.
+  `&&`/`||`/`??`, strings + `${}` interpolation, `print`, **`struct`s**
+  (construction, field read/write, and printing) and **`match`** (literal,
+  binding, and wildcard patterns). It now covers everything the interpreter
+  runs; the differential harness (`tests/run_tests.py`) checks that interpreter
+  and native output match, including `examples/features.aby`.
+- UI constructs (`component` / `state` / `render`) parse but have no runtime in
+  either backend yet (a later roadmap phase), so they do not execute to output.
 
 ## Known divergences (interpreter vs native)
 

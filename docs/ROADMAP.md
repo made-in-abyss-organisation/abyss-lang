@@ -23,10 +23,13 @@ you make it fast; make it fast before you make it pretty.*
 The compiler now builds and ships cross-platform. The backend was made portable
 (the POSIX-only `open_memstream` was removed in favour of a type-prediction
 codegen path), so `abyssc` compiles cleanly on macOS, Linux, and **Windows**
-(via clang). CI proves the interpreter and native backends agree on all
-supported programs across all three OSes on every push; pushing a `v*` tag cuts
-a GitHub Release with prebuilt binaries for each. Mobile packaging (Phase 8's
-APK/IPA) is a separate, later mountain — see
+(via clang). The native backend also reached **parity with the interpreter** —
+`struct`s (construction, field read/write, printing) and `match` (literal,
+binding, wildcard patterns) now lower to C, so there is no longer an
+interpreter-only language feature. CI proves the interpreter and native backends
+agree on all supported programs across all three OSes on every push; pushing a
+`v*` tag cuts a GitHub Release with prebuilt binaries for each. Mobile packaging
+(Phase 8's APK/IPA) is a separate, later mountain — see
 [`PERFORMANCE_AND_MOBILE_ROADMAP.md`](PERFORMANCE_AND_MOBILE_ROADMAP.md).
 
 ### Sequencing insight

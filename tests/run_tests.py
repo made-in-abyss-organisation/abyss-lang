@@ -22,20 +22,20 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXE = ".exe" if os.name == "nt" else ""
 
-# Differential: interpreter output MUST equal native output.
+# Differential: interpreter output MUST equal native output. The C backend now
+# covers struct + match (examples/features.aby), so it is checked here too.
 DIFFERENTIAL = [
     "examples/hello.aby",
     "examples/run_demo.aby",
+    "examples/features.aby",
     "bench/fib.aby",
 ]
 # Native build+run only (too slow to interpret 100M iterations).
 NATIVE_SMOKE = [
     "bench/loop.aby",
 ]
-# Interpreter-only language features (struct/match) the C backend can't emit yet.
-INTERP_ONLY = [
-    "examples/features.aby",
-]
+# Interpreter-only programs (e.g. UI components, which don't run to stdout yet).
+INTERP_ONLY = []
 
 
 def find_abyssc():
@@ -49,10 +49,14 @@ def find_abyssc():
 
 
 def find_cc():
+    # Allow overriding the C compiler (may be multi-token, e.g. "zig cc").
+    env = os.environ.get("ABYSS_CC")
+    if env:
+        return env.split()
     for c in ("clang", "cc", "gcc"):
         if shutil.which(c):
-            return c
-    sys.exit("error: no C compiler (clang/cc/gcc) on PATH")
+            return [c]
+    sys.exit("error: no C compiler (clang/cc/gcc) on PATH (or set ABYSS_CC)")
 
 
 ABYSSC = find_abyssc()
@@ -81,7 +85,7 @@ def native(path):
         sys.exit(f"FAIL: --emit-c errored on {path}\n{cg.stderr}")
     with open(cpath, "w") as f:
         f.write(cg.stdout)
-    cc = run([CC, "-std=c11", "-O2", cpath, "-o", binp])
+    cc = run(CC + ["-std=c11", "-O2", cpath, "-o", binp])
     if cc.returncode != 0:
         sys.exit(f"FAIL: C compile errored on {path}\n{cc.stderr}")
     r = run([binp])
@@ -92,7 +96,7 @@ def native(path):
 
 def main():
     print(f"abyssc = {ABYSSC}")
-    print(f"cc     = {CC}\n")
+    print(f"cc     = {' '.join(CC)}\n")
     failures = 0
 
     for path in DIFFERENTIAL:
