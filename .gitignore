@@ -2,8 +2,14 @@
 *.o
 *.a
 *.out
+*.exe
 abyssc
+abyssc.exe
 /build/
+/dist/
+abyss-*-*/
+abyss-*.tar.gz
+abyss-*.zip
 
 # editor / OS
 .DS_Store

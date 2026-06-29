@@ -150,36 +150,89 @@ static void gen_string(Node *n, FILE *o) {
 
 /* ---------- conversions (the single box/unbox chokepoint) ---------- */
 
-static void emit_conv(FILE *o, const char *inner, int got, int want) {
-    got = norm(got); want = norm(want);
-    if (got == want) { fputs(inner, o); return; }
-    if (want == CG_OTHER) {                       /* box native -> AV */
-        if (got == CG_INT)        fprintf(o, "av_int(%s)", inner);
-        else if (got == CG_FLOAT) fprintf(o, "av_float(%s)", inner);
-        else if (got == CG_BOOL)  fprintf(o, "av_bool(%s)", inner);
-        else                      fputs(inner, o);
-        return;
+/* Predict the CgTy that gen_expr() will emit for `n`, WITHOUT emitting it.
+ * This MUST stay in lockstep with the return values of gen_expr()/gen_binary().
+ * It lets gen_expr_as() wrap a sub-expression with the correct box/unbox
+ * conversion by emitting a prefix and suffix around a *direct* gen_expr() call,
+ * so we never have to capture generated text in a memory stream. (The old
+ * design used open_memstream, which is POSIX/glibc-only and absent on Windows;
+ * this keeps the backend portable across macOS, Linux, and Windows.) */
+static int expr_cgty(Node *n) {
+    switch (n->type) {
+        case NODE_LITERAL:
+            switch (n->as.literal.kind) {
+                case TOK_INT:   return CG_INT;
+                case TOK_FLOAT: return CG_FLOAT;
+                case TOK_TRUE: case TOK_FALSE: return CG_BOOL;
+                default:        return CG_OTHER;   /* nil, string */
+            }
+        case NODE_IDENT:
+            return norm(n->ty);
+        case NODE_UNARY:
+            if (n->as.unary.op[0] == '!') return CG_BOOL;
+            return is_native_num(norm(n->ty)) ? norm(n->ty) : CG_OTHER;
+        case NODE_BINARY: {
+            const char *op = n->as.binary.op;
+            if (!strcmp(op, "&&") || !strcmp(op, "||")) return CG_BOOL;
+            if (!strcmp(op, "??")) return CG_OTHER;
+            if (!strcmp(op, "==") || !strcmp(op, "!=")) return CG_OTHER;
+            int lt = norm(n->as.binary.left->ty);
+            int rt = norm(n->as.binary.right->ty);
+            int native_num = is_native_num(lt) && is_native_num(rt);
+            int common = (lt == CG_FLOAT || rt == CG_FLOAT) ? CG_FLOAT : CG_INT;
+            int relational = !strcmp(op, "<") || !strcmp(op, ">") ||
+                             !strcmp(op, "<=") || !strcmp(op, ">=");
+            if (relational) return native_num ? CG_BOOL : CG_OTHER;
+            if (!strcmp(op, "%")) return (lt == CG_INT && rt == CG_INT) ? CG_INT : CG_OTHER;
+            if (!strcmp(op, "/") && native_num && common == CG_INT) return CG_INT;
+            return native_num ? common : CG_OTHER;   /* + - *, and float / */
+        }
+        case NODE_ASSIGN: {
+            Node *tgt = n->as.assign.target;
+            if (tgt->type != NODE_IDENT) return CG_OTHER;
+            int tt = norm(tgt->ty);
+            if (n->as.assign.op[0] == '=') return tt;
+            return is_native(tt) ? tt : CG_OTHER;     /* compound += / -= */
+        }
+        case NODE_CALL: {
+            Node *callee = n->as.call.callee;
+            if (callee->type == NODE_IDENT && strcmp(callee->as.ident.name, "print") != 0) {
+                Node *fn = find_fn(callee->as.ident.name);
+                if (fn) return norm(fn->ty);
+            }
+            return CG_OTHER;
+        }
+        default:
+            return CG_OTHER;
     }
-    if (got == CG_OTHER) {                         /* unbox AV -> native */
-        if (want == CG_INT)        fprintf(o, "av_as_int(%s)", inner);
-        else if (want == CG_FLOAT) fprintf(o, "av_num(%s)", inner);
-        else if (want == CG_BOOL)  fprintf(o, "av_truthy(%s)", inner);
-        return;
-    }
-    /* native -> native */
-    if (want == CG_FLOAT)      fprintf(o, "(double)(%s)", inner);
-    else if (want == CG_INT)   fprintf(o, "(long long)(%s)", inner);
-    else if (want == CG_BOOL)  fprintf(o, "((%s)!=0)", inner);
 }
 
+/* Emit `n` converted to the `want` CgTy. Every conversion is prefix+inner+
+ * suffix, so we emit the prefix, let gen_expr() write the inner expression
+ * straight to `o`, then emit the suffix — no intermediate buffer required. */
 static void gen_expr_as(Node *n, int want, FILE *o) {
-    char *buf = NULL;
-    size_t sz = 0;
-    FILE *m = open_memstream(&buf, &sz);
-    int got = gen_expr(n, m);
-    fclose(m);
-    emit_conv(o, buf, got, want);
-    free(buf);
+    int got = norm(expr_cgty(n));
+    want = norm(want);
+    if (got == want) { gen_expr(n, o); return; }
+
+    const char *pre = "", *post = ")";
+    if (want == CG_OTHER) {                 /* box native -> AV */
+        if (got == CG_INT)        pre = "av_int(";
+        else if (got == CG_FLOAT) pre = "av_float(";
+        else if (got == CG_BOOL)  pre = "av_bool(";
+        else { gen_expr(n, o); return; }    /* nothing to box */
+    } else if (got == CG_OTHER) {           /* unbox AV -> native */
+        if (want == CG_INT)        pre = "av_as_int(";
+        else if (want == CG_FLOAT) pre = "av_num(";
+        else                       pre = "av_truthy(";   /* CG_BOOL */
+    } else {                                /* native -> native */
+        if (want == CG_FLOAT)      pre = "(double)(";
+        else if (want == CG_INT)   pre = "(long long)(";
+        else { pre = "(("; post = ")!=0)"; }             /* CG_BOOL */
+    }
+    fputs(pre, o);
+    gen_expr(n, o);
+    fputs(post, o);
 }
 
 /* ---------- expressions ---------- */

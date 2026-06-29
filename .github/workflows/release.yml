@@ -1,0 +1,110 @@
+name: Release
+
+# Cut a release by pushing a tag:  git tag v0.5.0 && git push origin v0.5.0
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+            ext: ""
+          - os: macos-latest
+            target: macos-universal   # x86_64 + arm64 in one binary
+            ext: ""
+          - os: windows-latest
+            target: windows-x86_64
+            ext: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Ensure clang (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command clang -ErrorAction SilentlyContinue)) {
+            choco install llvm --no-progress -y
+          }
+
+      - name: Build abyssc
+        shell: bash
+        run: |
+          set -e
+          mkdir -p build
+          if [ "${{ matrix.target }}" = "macos-universal" ]; then
+            cc -std=c11 -O2 -arch x86_64 -arch arm64 src/*.c -o build/abyssc
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            clang -std=c11 -O2 src/*.c -o build/abyssc.exe
+          else
+            CC=clang; command -v clang >/dev/null 2>&1 || CC=cc
+            "$CC" -std=c11 -O2 src/*.c -o build/abyssc
+          fi
+
+      - name: Smoke test
+        shell: bash
+        run: python tests/run_tests.py "build/abyssc${{ matrix.ext }}"
+
+      - name: Package
+        shell: bash
+        run: |
+          set -e
+          DIST="abyss-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir -p "$DIST"
+          cp "build/abyssc${{ matrix.ext }}" "$DIST"/
+          cp README.md LICENSE "$DIST"/
+          cp -r examples "$DIST"/
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a "$DIST.zip" "$DIST" >/dev/null
+          else
+            tar -czf "$DIST.tar.gz" "$DIST"
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            abyss-*.tar.gz
+            abyss-*.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Collect archives
+        run: |
+          mkdir -p out
+          find dist -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} out/ \;
+          ls -l out
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" out/* \
+            --repo "${{ github.repository }}" \
+            --title "Abyss ${{ github.ref_name }}" \
+            --generate-notes

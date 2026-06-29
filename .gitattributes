@@ -1,0 +1,8 @@
+# Keep LF endings for files that run on Unix/CI, regardless of the cloner's
+# core.autocrlf setting. A CRLF shebang breaks shell scripts on macOS/Linux.
+*.sh   text eol=lf
+*.py   text eol=lf
+*.yml  text eol=lf
+*.c    text eol=lf
+*.h    text eol=lf
+*.aby  text eol=lf

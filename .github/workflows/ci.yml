@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # macOS & Linux ship a C compiler; Windows needs clang for the GNU
+      # statement-expressions / _Generic the backend emits into generated C.
+      - name: Ensure clang (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command clang -ErrorAction SilentlyContinue)) {
+            choco install llvm --no-progress -y
+          }
+          clang --version
+
+      - name: Build abyssc
+        shell: bash
+        run: |
+          set -e
+          EXT=""
+          [ "$RUNNER_OS" = "Windows" ] && EXT=".exe"
+          CC=clang
+          command -v clang >/dev/null 2>&1 || CC=cc
+          echo "compiler: $CC"
+          mkdir -p build
+          "$CC" -std=c11 -Wall -Wextra -O2 src/*.c -o "build/abyssc$EXT"
+
+      - name: Run tests (interpreter vs native differential)
+        shell: bash
+        run: |
+          EXT=""
+          [ "$RUNNER_OS" = "Windows" ] && EXT=".exe"
+          python tests/run_tests.py "build/abyssc$EXT"

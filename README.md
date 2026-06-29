@@ -57,6 +57,8 @@ run in the interpreter and are next for the backend.) See
 
 ## Build & run
 
+**macOS / Linux** (with `make`):
+
 ```sh
 make                              # build abyssc
 ./abyssc examples/run_demo.aby    # RUN a program via the interpreter
@@ -64,6 +66,19 @@ make native                       # transpile run_demo to C, compile, run native
 ./abyssc --emit-c examples/run_demo.aby   # print the generated C
 ./abyssc --ast examples/demo.aby  # print the AST
 ./abyssc --tokens examples/demo.aby       # print the token stream
+```
+
+No `make`? Use the helper scripts:
+
+```sh
+./scripts/build.sh                # macOS / Linux  -> ./abyssc
+```
+
+**Windows** (PowerShell, needs LLVM/clang — `winget install LLVM.LLVM`):
+
+```powershell
+pwsh scripts/build.ps1            # -> .\abyssc.exe
+.\abyssc.exe examples\run_demo.aby
 ```
 
 Running `run_demo.aby` prints:
@@ -76,7 +91,25 @@ greeting     = hello, Abyss
 7 is odd
 ```
 
-Requires a C11 compiler (`cc`/`clang`/`gcc`) and `make`.
+Requires a C11 compiler. On macOS/Linux any of `cc`/`clang`/`gcc` works; on
+Windows use **clang** (the C the backend emits uses GNU statement-expressions
+and `_Generic`, which MSVC does not accept).
+
+## CI & releases
+
+- **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) builds `abyssc`
+  on **Linux, macOS, and Windows** on every push/PR and runs the differential
+  test harness ([`tests/run_tests.py`](tests/run_tests.py)) — every
+  backend-supported program must produce identical output through the
+  interpreter and the native binary.
+- **Releases** ([`.github/workflows/release.yml`](.github/workflows/release.yml))
+  are cut by pushing a tag. Each tag builds and packages prebuilt `abyssc`
+  binaries — **macOS (universal x86_64 + arm64), Windows (x86_64), Linux
+  (x86_64)** — and attaches them to a GitHub Release:
+
+  ```sh
+  git tag v0.5.0 && git push origin v0.5.0
+  ```
 
 ## Layout
 
@@ -86,6 +119,10 @@ src/        compiler source (C)
   lexer.*   the lexer (Phase 1)
   main.c    abyssc entry point
 examples/   sample .aby programs
+bench/      benchmark suite (vs hand-C and Dart AOT)
+tests/      cross-platform differential test harness
+scripts/    no-make build helpers (build.sh / build.ps1)
+.github/    CI + release pipelines (Linux/macOS/Windows)
 docs/       language spec & roadmap
 ```
 
