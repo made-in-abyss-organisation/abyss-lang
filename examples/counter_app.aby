@@ -1,0 +1,51 @@
+// counter_app.aby — Abyss's first running app.
+//
+// The signature feature: `component` / `state` / `render` are part of the
+// language. This program MOUNTS a component, RENDERS a frame, simulates user
+// taps by calling a method (which mutates `state`), and RE-RENDERS — proving
+// the reactive model end to end. The render target here is textual (a headless
+// widget tree); binding it to a real graphics surface is the next step.
+
+import "abyss/ui"
+
+component Counter {
+    state count: Int = 0
+    state label: String = "Taps"
+
+    fn increment() {
+        count += 1
+    }
+
+    fn reset() {
+        count = 0
+    }
+
+    render {
+        Column(spacing: 12) {
+            Text("${label}: ${count}")
+                .size(24)
+                .bold()
+            Button("Increment", on_tap: increment)
+            Button("Reset", on_tap: reset)
+        }
+    }
+}
+
+fn main() {
+    let app = Counter()
+
+    print("== frame 0 (just mounted) ==")
+    render(app)
+
+    app.increment()
+    app.increment()
+    app.increment()
+    print("== frame 1 (after 3 taps) ==")
+    render(app)
+
+    app.reset()
+    print("== frame 2 (after reset) ==")
+    render(app)
+
+    print("final count =", app.count)
+}

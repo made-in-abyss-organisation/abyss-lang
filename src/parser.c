@@ -123,7 +123,9 @@ static Node *parse_primary(Parser *p) {
             advance(p);
             return n;
         }
-        case TOK_IDENT: {
+        case TOK_IDENT:
+        case TOK_RENDER: {   /* `render` doubles as the built-in render() in expressions;
+                              * the component grammar consumes its own `render` positionally */
             Node *n = new_node(NODE_IDENT, t.line);
             n->as.ident.name = token_text(t);
             advance(p);

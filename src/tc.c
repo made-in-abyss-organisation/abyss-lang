@@ -9,7 +9,8 @@
 
 typedef enum {
     TY_NIL, TY_INT, TY_FLOAT, TY_BOOL, TY_STRING, TY_VOID,
-    TY_RANGE, TY_LIST, TY_STRUCT, TY_STRUCT_DEF, TY_FN, TY_ANY, TY_ERROR
+    TY_RANGE, TY_LIST, TY_STRUCT, TY_STRUCT_DEF, TY_FN,
+    TY_COMPONENT_DEF, TY_ANY, TY_ERROR
 } TypeKind;
 
 typedef struct {
@@ -21,6 +22,7 @@ static Type ty(TypeKind k)            { Type t; t.kind = k; t.decl = NULL; retur
 static Type ty_struct(Node *d)        { Type t; t.kind = TY_STRUCT; t.decl = d; return t; }
 static Type ty_struct_def(Node *d)    { Type t; t.kind = TY_STRUCT_DEF; t.decl = d; return t; }
 static Type ty_fn(Node *d)            { Type t; t.kind = TY_FN; t.decl = d; return t; }
+static Type ty_component_def(Node *d) { Type t; t.kind = TY_COMPONENT_DEF; t.decl = d; return t; }
 
 static int is_num(TypeKind k)     { return k == TY_INT || k == TY_FLOAT; }
 static int is_unknown(TypeKind k) { return k == TY_ANY || k == TY_ERROR; }
@@ -83,6 +85,7 @@ static const char *kind_name(TypeKind k) {
         case TY_RANGE: return "Range"; case TY_LIST: return "List";
         case TY_STRUCT: return "struct";
         case TY_STRUCT_DEF: return "type"; case TY_FN: return "function";
+        case TY_COMPONENT_DEF: return "component";
         default: return "?";
     }
 }
@@ -198,6 +201,8 @@ static Type check_call(Node *n, TypeEnv *env) {
         }
         return ty_struct(callee.decl);
     }
+    if (callee.kind == TY_COMPONENT_DEF)   /* mounting a component yields an instance */
+        return ty(TY_ANY);
     if (is_unknown(callee.kind)) return ty(TY_ANY);
     terror(n->line, "value of type %s is not callable", kind_name(callee.kind));
     return ty(TY_ANY);
@@ -479,6 +484,7 @@ int typecheck(Node *program) {
     te_define(g_globals, "print", ty_fn(NULL));  /* builtin, variadic */
     te_define(g_globals, "len", ty_fn(NULL));    /* builtin: List|String -> Int */
     te_define(g_globals, "push", ty_fn(NULL));   /* builtin: (List, T) -> Nil   */
+    te_define(g_globals, "render", ty_fn(NULL)); /* builtin: Component -> Nil   */
 
     NodeList *decls = &program->as.program.declarations;
 
@@ -489,6 +495,8 @@ int typecheck(Node *program) {
             te_define(g_globals, d->as.fn_decl.name, ty_fn(d));
         else if (d->type == NODE_STRUCT)
             te_define(g_globals, d->as.struct_decl.name, ty_struct_def(d));
+        else if (d->type == NODE_COMPONENT)
+            te_define(g_globals, d->as.component.name, ty_component_def(d));
     }
 
     /* pass 1b: type each global from its declaration/initialiser and register

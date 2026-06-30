@@ -91,6 +91,9 @@ static Value v_struct_def(Node *d)  { Value v; v.type = VAL_STRUCT_DEF; v.as.str
 static Value v_instance(Instance *i){ Value v; v.type = VAL_INSTANCE; v.as.instance = i; return v; }
 static Value v_range(long long a, long long b) { Value v; v.type = VAL_RANGE; v.as.range.start = a; v.as.range.end = b; return v; }
 static Value v_list(AbyssList *l)   { Value v; v.type = VAL_LIST; v.as.list = l; return v; }
+static Value v_comp_def(Node *d)    { Value v; v.type = VAL_COMPONENT_DEF; v.as.comp_def.decl = d; return v; }
+static Value v_comp_inst(Node *d, Env *e) { Value v; v.type = VAL_COMPONENT; v.as.comp_inst.decl = d; v.as.comp_inst.env = e; return v; }
+static Value v_bound(Node *fn, Env *e)    { Value v; v.type = VAL_BOUND_METHOD; v.as.bound.fn = fn; v.as.bound.env = e; return v; }
 
 static int is_num(Value v)   { return v.type == VAL_INT || v.type == VAL_FLOAT; }
 static double as_num(Value v){ return v.type == VAL_INT ? (double)v.as.integer : v.as.floating; }
@@ -125,6 +128,9 @@ static void print_value(Value v) {
         case VAL_FN:     printf("<fn %s>", v.as.fn.decl->as.fn_decl.name); break;
         case VAL_NATIVE: printf("<native fn>"); break;
         case VAL_STRUCT_DEF: printf("<struct %s>", v.as.struct_def.decl->as.struct_decl.name); break;
+        case VAL_COMPONENT_DEF: printf("<component %s>", v.as.comp_def.decl->as.component.name); break;
+        case VAL_COMPONENT: printf("<%s>", v.as.comp_inst.decl->as.component.name); break;
+        case VAL_BOUND_METHOD: printf("%s", v.as.bound.fn->as.fn_decl.name); break;
         case VAL_RANGE:  printf("%lld..%lld", v.as.range.start, v.as.range.end); break;
         case VAL_LIST: {
             AbyssList *l = v.as.list;
@@ -313,6 +319,38 @@ static Value apply_binary(const char *op, Value l, Value r) {
 
 static Value call_value(Value callee, Value *argv, int argc) {
     if (callee.type == VAL_NATIVE) return callee.as.native(argc, argv);
+    if (callee.type == VAL_COMPONENT_DEF) {   /* mount: build the instance + state */
+        Node *decl = callee.as.comp_def.decl;
+        NodeList *members = &decl->as.component.members;
+        Env *cenv = env_new(g_global);
+        for (int i = 0; i < members->count; i++) {   /* state first */
+            Node *m = members->items[i];
+            if (m->type == NODE_STATE_DECL) {
+                Value v = m->as.state_decl.init ? eval(m->as.state_decl.init, cenv) : v_nil();
+                env_define(cenv, m->as.state_decl.name, v);
+            }
+        }
+        Value inst = v_comp_inst(decl, cenv);        /* then methods, bound to cenv */
+        for (int i = 0; i < members->count; i++) {
+            Node *m = members->items[i];
+            if (m->type == NODE_FN_DECL)
+                env_define(cenv, m->as.fn_decl.name, v_bound(m, cenv));
+        }
+        return inst;
+    }
+    if (callee.type == VAL_BOUND_METHOD) {    /* invoke a method against its state */
+        Node *decl = callee.as.bound.fn;
+        NodeList *params = &decl->as.fn_decl.params;
+        if (argc != params->count)
+            runtime_error("'%s' expects %d argument(s), got %d",
+                          decl->as.fn_decl.name, params->count, argc);
+        Env *local = env_new(callee.as.bound.env);   /* parent = instance env */
+        for (int i = 0; i < argc; i++)
+            env_define(local, params->items[i]->as.param.name, argv[i]);
+        Value ret = v_nil();
+        exec(decl->as.fn_decl.body, local, &ret);
+        return ret;
+    }
     if (callee.type == VAL_STRUCT_DEF) {     /* construct an instance */
         Node *decl = callee.as.struct_def.decl;
         NodeList *fields = &decl->as.struct_decl.fields;
@@ -476,6 +514,13 @@ static Value eval(Node *n, Env *env) {
         case NODE_GET: {
             Value obj = eval(n->as.get.object, env);
             if (n->as.get.safe && obj.type == VAL_NIL) return v_nil();
+            if (obj.type == VAL_COMPONENT) {      /* state read or method handle */
+                Env *ce = obj.as.comp_inst.env;
+                for (int i = ce->count - 1; i >= 0; i--)
+                    if (strcmp(ce->names[i], n->as.get.name) == 0) return ce->values[i];
+                runtime_error("component '%s' has no member '%s'",
+                              obj.as.comp_inst.decl->as.component.name, n->as.get.name);
+            }
             if (obj.type != VAL_INSTANCE)
                 runtime_error("cannot read field '%s' of a non-struct value", n->as.get.name);
             Instance *in = obj.as.instance;
@@ -600,6 +645,68 @@ static ExecStatus exec(Node *n, Env *env, Value *ret) {
     }
 }
 
+/* ---------- headless UI renderer (Phase 6 foundation) ----------
+ *
+ * `render(component)` walks the parsed `render { ... }` tree, evaluating each
+ * argument/modifier expression against the instance's live `state`, and prints
+ * the resulting widget tree. This is a *text* render target: it proves the
+ * component model end to end (mount → evaluate render → re-render on state
+ * change) without yet binding a graphics backend. Swapping this printer for a
+ * Skia/Canvas surface is Phase 6 proper; the tree it walks is the same. */
+
+static char *ui_value_str(Value v) {
+    if (v.type == VAL_STRING) {
+        size_t n = strlen(v.as.string) + 3;
+        char *s = (char *)malloc(n);
+        snprintf(s, n, "\"%s\"", v.as.string);
+        return s;
+    }
+    if (v.type == VAL_BOUND_METHOD) return copy_cstr(v.as.bound.fn->as.fn_decl.name);
+    return value_to_cstr(v);   /* ints, floats, bools, lists, nil */
+}
+
+static void render_args(NodeList *args, Env *env) {
+    for (int i = 0; i < args->count; i++) {
+        if (i) printf(", ");
+        Node *a = args->items[i];                       /* NODE_UI_ARG */
+        if (a->as.ui_arg.label) printf("%s: ", a->as.ui_arg.label);
+        char *s = ui_value_str(eval(a->as.ui_arg.value, env));
+        printf("%s", s);
+        free(s);
+    }
+}
+
+static void render_node(Node *n, Env *env, int depth) {
+    for (int i = 0; i < depth; i++) printf("  ");
+    printf("%s", n->as.ui_node.name);
+    if (n->as.ui_node.args.count > 0) {
+        printf("(");
+        render_args(&n->as.ui_node.args, env);
+        printf(")");
+    }
+    NodeList *mods = &n->as.ui_node.modifiers;
+    for (int i = 0; i < mods->count; i++) {
+        Node *m = mods->items[i];
+        printf(".%s(", m->as.modifier.name);
+        render_args(&m->as.modifier.args, env);
+        printf(")");
+    }
+    printf("\n");
+    NodeList *kids = &n->as.ui_node.children;
+    for (int i = 0; i < kids->count; i++)
+        render_node(kids->items[i], env, depth + 1);
+}
+
+static Value native_render(int argc, Value *argv) {
+    if (argc != 1) runtime_error("render() takes exactly 1 argument");
+    if (argv[0].type != VAL_COMPONENT)
+        runtime_error("render() needs a mounted component instance");
+    Node *decl = argv[0].as.comp_inst.decl;
+    if (decl->as.component.render_body)
+        render_node(decl->as.component.render_body, argv[0].as.comp_inst.env, 0);
+    return v_nil();
+}
+
 /* ---------- entry point ---------- */
 
 int interpret(Node *program) {
@@ -607,6 +714,7 @@ int interpret(Node *program) {
     env_define(g_global, "print", v_native(native_print));
     env_define(g_global, "len", v_native(native_len));
     env_define(g_global, "push", v_native(native_push));
+    env_define(g_global, "render", v_native(native_render));
 
     NodeList *decls = &program->as.program.declarations;
     for (int i = 0; i < decls->count; i++) {
@@ -618,8 +726,10 @@ int interpret(Node *program) {
         } else if (d->type == NODE_VAR_DECL) {
             Value v = d->as.var_decl.init ? eval(d->as.var_decl.init, g_global) : v_nil();
             env_define(g_global, d->as.var_decl.name, v);
+        } else if (d->type == NODE_COMPONENT) {
+            env_define(g_global, d->as.component.name, v_comp_def(d));
         }
-        /* imports & components are inert until later phases */
+        /* imports are inert until later phases */
     }
 
     Value main_fn;

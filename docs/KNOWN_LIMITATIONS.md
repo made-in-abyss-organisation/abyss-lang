@@ -20,8 +20,16 @@ fuzzed (see the adversarial test pass); they agree on all tested programs
   not yet a native scalar. Homogeneous unboxed lists (and `Map`) are a later
   Phase-5b step. This is a performance note, not a correctness divergence — the
   two backends still produce identical output.
-- UI constructs (`component` / `state` / `render`) parse but have no runtime in
-  either backend yet (a later roadmap phase), so they do not execute to output.
+- UI constructs (`component` / `state` / `render`) now **execute in the
+  interpreter**: a component is mounted by calling it (`Counter()`), `render(app)`
+  walks the `render` tree against the instance's live `state`, and invoking a
+  method (`app.increment()`) mutates state so the next `render` reflects it
+  (`examples/counter_app.aby`). Two caveats remain: (1) the render target is a
+  **headless text tree**, not a graphics surface (Skia binding is Phase 6
+  proper); (2) the **C backend does not lower UI trees yet** — `--emit-c` on a
+  component program reports the UI nodes as unsupported, so component programs
+  are interpreter-only and live in the harness's `INTERP_ONLY` set rather than
+  the differential set.
 
 ## Known divergences (interpreter vs native)
 

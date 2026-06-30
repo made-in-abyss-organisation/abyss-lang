@@ -35,8 +35,12 @@ DIFFERENTIAL = [
 NATIVE_SMOKE = [
     "bench/loop.aby",
 ]
-# Interpreter-only programs (e.g. UI components, which don't run to stdout yet).
-INTERP_ONLY = []
+# Interpreter-only programs. The component/state/render runtime currently runs
+# in the interpreter (the C backend doesn't lower UI trees yet), so the first
+# app is asserted to mount, render, and re-render cleanly here.
+INTERP_ONLY = [
+    "examples/counter_app.aby",
+]
 
 
 def find_abyssc():
