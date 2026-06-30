@@ -29,18 +29,17 @@ DIFFERENTIAL = [
     "examples/run_demo.aby",
     "examples/features.aby",
     "examples/lists.aby",
+    "examples/counter_app.aby",
     "bench/fib.aby",
 ]
 # Native build+run only (too slow to interpret 100M iterations).
 NATIVE_SMOKE = [
     "bench/loop.aby",
 ]
-# Interpreter-only programs. The component/state/render runtime currently runs
-# in the interpreter (the C backend doesn't lower UI trees yet), so the first
-# app is asserted to mount, render, and re-render cleanly here.
-INTERP_ONLY = [
-    "examples/counter_app.aby",
-]
+# Interpreter-only programs (none currently — the component/state/render
+# runtime is now lowered to the C backend too, so the first app is checked
+# differentially above).
+INTERP_ONLY = []
 
 
 def find_abyssc():

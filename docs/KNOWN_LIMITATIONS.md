@@ -20,16 +20,21 @@ fuzzed (see the adversarial test pass); they agree on all tested programs
   not yet a native scalar. Homogeneous unboxed lists (and `Map`) are a later
   Phase-5b step. This is a performance note, not a correctness divergence — the
   two backends still produce identical output.
-- UI constructs (`component` / `state` / `render`) now **execute in the
-  interpreter**: a component is mounted by calling it (`Counter()`), `render(app)`
+- UI constructs (`component` / `state` / `render`) now **execute in both
+  backends**: a component is mounted by calling it (`Counter()`), `render(app)`
   walks the `render` tree against the instance's live `state`, and invoking a
   method (`app.increment()`) mutates state so the next `render` reflects it
-  (`examples/counter_app.aby`). Two caveats remain: (1) the render target is a
-  **headless text tree**, not a graphics surface (Skia binding is Phase 6
-  proper); (2) the **C backend does not lower UI trees yet** — `--emit-c` on a
-  component program reports the UI nodes as unsupported, so component programs
-  are interpreter-only and live in the harness's `INTERP_ONLY` set rather than
-  the differential set.
+  (`examples/counter_app.aby`). The native backend lowers components to a C
+  struct-object instance, per-method functions, a mount function, and a render
+  function, with runtime dispatch by type name; the interpreter and native
+  binary print byte-identical frames (checked in the differential suite). The
+  one remaining caveat: the render target is a **headless text tree**, not a
+  graphics surface — binding it to Skia/Canvas is Phase 6 proper.
+- **Component-backend edge cases (native).** A component method or `render`
+  resolves a bare name to a `state` field whenever one exists, so a local
+  variable or parameter that *shadows* a state field is not yet handled in the
+  native backend (the interpreter resolves it correctly via scope). None of the
+  current examples shadow state; this is a known gap, not a silent divergence.
 
 ## Known divergences (interpreter vs native)
 

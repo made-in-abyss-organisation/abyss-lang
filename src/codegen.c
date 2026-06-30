@@ -18,6 +18,9 @@ static int g_unsupported;
 static int g_tmp;          /* unique-name counter for loop temporaries */
 static Node *g_program;    /* for resolving callee signatures */
 static int g_fn_ret;       /* CgTy the current function returns */
+static Node *g_cur_comp;   /* component whose method/render/mount we're emitting,
+                            * or NULL at top level. When set, bare references to a
+                            * state field lower to av_get/av_set(self, ...). */
 
 static int gen_expr(Node *n, FILE *o);            /* returns the CgTy it emitted */
 static void gen_expr_as(Node *n, int want, FILE *o);
@@ -56,6 +59,31 @@ static Node *find_struct(const char *name) {
             return d->items[i];
     return NULL;
 }
+
+static Node *find_component(const char *name) {
+    NodeList *d = &g_program->as.program.declarations;
+    for (int i = 0; i < d->count; i++)
+        if (d->items[i]->type == NODE_COMPONENT &&
+            strcmp(d->items[i]->as.component.name, name) == 0)
+            return d->items[i];
+    return NULL;
+}
+
+/* a component member by name+kind (NODE_STATE_DECL or NODE_FN_DECL) */
+static Node *comp_member(Node *comp, const char *name, NodeType kind) {
+    if (!comp) return NULL;
+    NodeList *ms = &comp->as.component.members;
+    for (int i = 0; i < ms->count; i++) {
+        Node *m = ms->items[i];
+        if (m->type != kind) continue;
+        const char *mn = kind == NODE_STATE_DECL ? m->as.state_decl.name
+                                                 : m->as.fn_decl.name;
+        if (strcmp(mn, name) == 0) return m;
+    }
+    return NULL;
+}
+static Node *comp_state(Node *comp, const char *name)  { return comp_member(comp, name, NODE_STATE_DECL); }
+static Node *comp_method(Node *comp, const char *name) { return comp_member(comp, name, NODE_FN_DECL); }
 
 /* Each parameter and the return are typed INDEPENDENTLY: a scalar param/return
  * is native (cty -> long long/double/_Bool), anything else is AV. Storage uses
@@ -122,7 +150,10 @@ static void gen_prelude(FILE *o) {
     fputs("static void av_strapp(char **buf, size_t *cap, size_t *len, const char *s){ size_t n=strlen(s); while(*len+n+1>*cap){ *cap*=2; *buf=realloc(*buf,*cap);} memcpy(*buf+*len,s,n+1); *len+=n; }\n", o);
     fputs("static AV av_tostr(AV v){ if(v.k==AV_STR)return v; if(v.k==AV_LIST){ AList *l=v.u.l; size_t cap=8,len=0; char *b=malloc(cap); b[0]=0; av_strapp(&b,&cap,&len,\"[\"); for(int i=0;i<l->n;i++){ if(i)av_strapp(&b,&cap,&len,\", \"); AV e=av_tostr(l->items[i]); av_strapp(&b,&cap,&len,e.u.s); } av_strapp(&b,&cap,&len,\"]\"); return av_str(b); } if(v.k==AV_STRUCT)return av_str(\"<fn>\"); char buf[64]; if(v.k==AV_INT)snprintf(buf,sizeof buf,\"%lld\",v.u.i); else if(v.k==AV_FLOAT)snprintf(buf,sizeof buf,\"%g\",v.u.f); else if(v.k==AV_BOOL)snprintf(buf,sizeof buf,\"%s\",v.u.b?\"true\":\"false\"); else snprintf(buf,sizeof buf,\"nil\"); char *s=malloc(strlen(buf)+1); strcpy(s,buf); return av_str(s); }\n", o);
     fputs("static void av_print1(AV v){ if(v.k==AV_NIL)printf(\"nil\"); else if(v.k==AV_BOOL)printf(\"%s\",v.u.b?\"true\":\"false\"); else if(v.k==AV_INT)printf(\"%lld\",v.u.i); else if(v.k==AV_FLOAT)printf(\"%g\",v.u.f); else if(v.k==AV_STR)printf(\"%s\",v.u.s); else if(v.k==AV_LIST){ AList *l=v.u.l; printf(\"[\"); for(int i=0;i<l->n;i++){ if(i)printf(\", \"); av_print1(l->items[i]); } printf(\"]\"); } else if(v.k==AV_STRUCT){ AObj *o=v.u.o; printf(\"%s { \",o->name); for(int i=0;i<o->n;i++){ if(i)printf(\", \"); printf(\"%s: \",o->names[i]); av_print1(o->vals[i]); } printf(\" }\"); } }\n", o);
-    fputs("static AV av_print(int n, ...){ va_list ap; va_start(ap,n); for(int i=0;i<n;i++){ if(i)printf(\" \"); AV v=va_arg(ap,AV); av_print1(v);} va_end(ap); printf(\"\\n\"); return av_nil(); }\n\n", o);
+    fputs("static AV av_print(int n, ...){ va_list ap; va_start(ap,n); for(int i=0;i<n;i++){ if(i)printf(\" \"); AV v=va_arg(ap,AV); av_print1(v);} va_end(ap); printf(\"\\n\"); return av_nil(); }\n", o);
+    /* print a value as it appears in a rendered widget tree: strings quoted,
+     * everything else via av_tostr (matches the interpreter's ui_value_str) */
+    fputs("static void av_print_ui(AV v){ if(v.k==AV_STR){ printf(\"\\\"%s\\\"\", v.u.s);} else { AV s=av_tostr(v); printf(\"%s\", s.u.s);} }\n\n", o);
 }
 
 /* ---------- string literals (with ${ident} interpolation) ---------- */
@@ -142,9 +173,16 @@ static void emit_cstr(FILE *o, const char *s, int len) {
 typedef struct { int is_ident; const char *p; int n; } Piece;
 
 static void emit_piece(FILE *o, Piece pc) {
-    /* AV_OF boxes whatever C type the variable lowered to (native or AV) */
-    if (pc.is_ident) { fputs("av_tostr(AV_OF(a_", o); fwrite(pc.p, 1, (size_t)pc.n, o); fputs("))", o); }
-    else { fputs("av_str(", o); emit_cstr(o, pc.p, pc.n); fputc(')', o); }
+    if (pc.is_ident) {
+        char name[128];
+        int nl = pc.n < 127 ? pc.n : 127;
+        memcpy(name, pc.p, (size_t)nl); name[nl] = '\0';
+        if (g_cur_comp && comp_state(g_cur_comp, name)) {   /* a state field */
+            fprintf(o, "av_tostr(av_get(self, \"%s\", 0))", name);
+        } else {   /* AV_OF boxes whatever C type the variable lowered to */
+            fputs("av_tostr(AV_OF(a_", o); fwrite(pc.p, 1, (size_t)pc.n, o); fputs("))", o);
+        }
+    } else { fputs("av_str(", o); emit_cstr(o, pc.p, pc.n); fputc(')', o); }
 }
 
 static void emit_fold(FILE *o, Piece *pc, int count, int idx) {
@@ -195,6 +233,7 @@ static int expr_cgty(Node *n) {
                 default:        return CG_OTHER;   /* nil, string */
             }
         case NODE_IDENT:
+            if (g_cur_comp && comp_state(g_cur_comp, n->as.ident.name)) return CG_OTHER;
             return norm(n->ty);
         case NODE_UNARY:
             if (n->as.unary.op[0] == '!') return CG_BOOL;
@@ -218,6 +257,7 @@ static int expr_cgty(Node *n) {
         case NODE_ASSIGN: {
             Node *tgt = n->as.assign.target;
             if (tgt->type != NODE_IDENT) return CG_OTHER;
+            if (g_cur_comp && comp_state(g_cur_comp, tgt->as.ident.name)) return CG_OTHER;
             int tt = norm(tgt->ty);
             if (n->as.assign.op[0] == '=') return tt;
             return is_native(tt) ? tt : CG_OTHER;     /* compound += / -= */
@@ -417,6 +457,10 @@ static int gen_expr(Node *n, FILE *o) {
                 default: fputs("av_nil()", o); return CG_OTHER;
             }
         case NODE_IDENT:
+            if (g_cur_comp && comp_state(g_cur_comp, n->as.ident.name)) {
+                fprintf(o, "av_get(self, \"%s\", 0)", n->as.ident.name);
+                return CG_OTHER;
+            }
             fprintf(o, "a_%s", n->as.ident.name);
             return norm(n->ty);
         case NODE_UNARY:
@@ -469,6 +513,19 @@ static int gen_expr(Node *n, FILE *o) {
                 return CG_OTHER;
             }
             if (tgt->type != NODE_IDENT) { g_unsupported++; fputs("av_nil()", o); return CG_OTHER; }
+            if (g_cur_comp && comp_state(g_cur_comp, tgt->as.ident.name)) {  /* state field write */
+                const char *sname = tgt->as.ident.name;
+                const char *aop = n->as.assign.op;
+                if (aop[0] == '=') {
+                    fprintf(o, "av_set(self, \"%s\", ", sname);
+                    gen_expr_as(n->as.assign.value, CG_OTHER, o); fputc(')', o);
+                } else {
+                    const char *afn = aop[0] == '+' ? "av_add" : "av_sub";
+                    fprintf(o, "av_set(self, \"%s\", %s(av_get(self, \"%s\", 0), ", sname, afn, sname);
+                    gen_expr_as(n->as.assign.value, CG_OTHER, o); fputs("))", o);
+                }
+                return CG_OTHER;
+            }
             const char *name = tgt->as.ident.name;
             const char *op = n->as.assign.op;
             int tt = norm(tgt->ty);
@@ -506,7 +563,38 @@ static int gen_expr(Node *n, FILE *o) {
                 fputs(", ", o); gen_expr_as(args->items[1], CG_OTHER, o); fputc(')', o);
                 return CG_OTHER;
             }
+            if (callee->type == NODE_IDENT && !strcmp(callee->as.ident.name, "render") &&
+                args->count == 1) {
+                fputs("abyss_render(", o); gen_expr_as(args->items[0], CG_OTHER, o); fputc(')', o);
+                return CG_OTHER;
+            }
+            if (callee->type == NODE_GET) {   /* method call: inst.method(args) — runtime dispatch */
+                fputs("abyss_method(", o); gen_expr_as(callee->as.get.object, CG_OTHER, o);
+                fprintf(o, ", \"%s\", %d, ", callee->as.get.name, args->count);
+                if (args->count == 0) fputs("NULL)", o);
+                else {
+                    fputs("(AV[]){", o);
+                    for (int i = 0; i < args->count; i++) {
+                        if (i) fputs(", ", o);
+                        gen_expr_as(args->items[i], CG_OTHER, o);
+                    }
+                    fputs("})", o);
+                }
+                return CG_OTHER;
+            }
             if (callee->type == NODE_IDENT) {
+                /* mounting a component: Counter()  ->  af_mount_Counter() */
+                if (find_component(callee->as.ident.name)) {
+                    fprintf(o, "af_mount_%s()", callee->as.ident.name);
+                    return CG_OTHER;
+                }
+                /* a method calling a sibling method by bare name */
+                if (g_cur_comp && comp_method(g_cur_comp, callee->as.ident.name)) {
+                    fprintf(o, "af_%s_%s(self", g_cur_comp->as.component.name, callee->as.ident.name);
+                    for (int i = 0; i < args->count; i++) { fputs(", ", o); gen_expr_as(args->items[i], CG_OTHER, o); }
+                    fputc(')', o);
+                    return CG_OTHER;
+                }
                 Node *fn = find_fn(callee->as.ident.name);
                 if (!fn) {
                     Node *st = find_struct(callee->as.ident.name);
@@ -672,9 +760,170 @@ static void gen_fn(Node *fn, FILE *o) {
     fputs("}\n\n", o);
 }
 
+/* ---------- components (the UI layer) ---------- */
+
+static void gen_ui_args(NodeList *args, FILE *o, int ind);
+
+/* Lower a render tree to printf statements that reproduce, byte for byte, the
+ * interpreter's headless render (render_node in interp.c). Argument/modifier
+ * expressions are evaluated against the live instance (`self`); a bare method
+ * name used as an argument prints as a handler reference. */
+static void gen_ui_render(Node *ui, FILE *o, int depth, int ind) {
+    indent(o, ind); fputs("printf(\"", o);
+    for (int i = 0; i < depth * 2; i++) fputc(' ', o);
+    fputs(ui->as.ui_node.name, o);
+    fputs("\");\n", o);
+    if (ui->as.ui_node.args.count > 0) {
+        indent(o, ind); fputs("printf(\"(\");\n", o);
+        gen_ui_args(&ui->as.ui_node.args, o, ind);
+        indent(o, ind); fputs("printf(\")\");\n", o);
+    }
+    NodeList *mods = &ui->as.ui_node.modifiers;
+    for (int i = 0; i < mods->count; i++) {
+        Node *m = mods->items[i];
+        indent(o, ind); fprintf(o, "printf(\".%s(\");\n", m->as.modifier.name);
+        gen_ui_args(&m->as.modifier.args, o, ind);
+        indent(o, ind); fputs("printf(\")\");\n", o);
+    }
+    indent(o, ind); fputs("printf(\"\\n\");\n", o);
+    NodeList *kids = &ui->as.ui_node.children;
+    for (int i = 0; i < kids->count; i++)
+        gen_ui_render(kids->items[i], o, depth + 1, ind);
+}
+
+static void gen_ui_args(NodeList *args, FILE *o, int ind) {
+    for (int i = 0; i < args->count; i++) {
+        Node *a = args->items[i];                       /* NODE_UI_ARG */
+        if (i) { indent(o, ind); fputs("printf(\", \");\n", o); }
+        if (a->as.ui_arg.label) { indent(o, ind); fprintf(o, "printf(\"%s: \");\n", a->as.ui_arg.label); }
+        Node *v = a->as.ui_arg.value;
+        if (v->type == NODE_IDENT && g_cur_comp && comp_method(g_cur_comp, v->as.ident.name)) {
+            indent(o, ind); fprintf(o, "printf(\"%s\");\n", v->as.ident.name);
+        } else {
+            indent(o, ind); fputs("av_print_ui(", o); gen_expr_as(v, CG_OTHER, o); fputs(");\n", o);
+        }
+    }
+}
+
+static void gen_method(Node *comp, Node *fn, FILE *o) {
+    g_cur_comp = comp;
+    g_fn_ret = CG_OTHER;        /* methods return boxed AV */
+    fprintf(o, "static AV af_%s_%s(AV self", comp->as.component.name, fn->as.fn_decl.name);
+    NodeList *ps = &fn->as.fn_decl.params;
+    for (int i = 0; i < ps->count; i++)
+        fprintf(o, ", %s a_%s", cty(ps->items[i]->ty), ps->items[i]->as.param.name);
+    fputs(") {\n    (void)self;\n", o);
+    gen_stmt(fn->as.fn_decl.body, o, 1);
+    fputs("    return av_nil();\n}\n\n", o);
+    g_cur_comp = NULL;
+}
+
+static void gen_mount(Node *comp, FILE *o) {
+    const char *cn = comp->as.component.name;
+    NodeList *ms = &comp->as.component.members;
+    int ns = 0;
+    for (int i = 0; i < ms->count; i++) if (ms->items[i]->type == NODE_STATE_DECL) ns++;
+    fprintf(o, "static AV af_mount_%s(void) {\n", cn);
+    fprintf(o, "    AV self = av_obj(\"%s\", %d, ", cn, ns);
+    if (ns == 0) fputs("NULL, NULL);\n", o);
+    else {
+        int k = 0;
+        fputs("(const char*[]){", o);
+        for (int i = 0; i < ms->count; i++)
+            if (ms->items[i]->type == NODE_STATE_DECL)
+                fprintf(o, "%s\"%s\"", k++ ? ", " : "", ms->items[i]->as.state_decl.name);
+        fputs("}, (AV[]){", o);
+        for (int i = 0, kk = 0; i < ms->count; i++)
+            if (ms->items[i]->type == NODE_STATE_DECL)
+                fprintf(o, "%sav_nil()", kk++ ? ", " : "");
+        fputs("});\n", o);
+    }
+    g_cur_comp = comp;       /* state initialisers may reference earlier state */
+    for (int i = 0; i < ms->count; i++) {
+        Node *m = ms->items[i];
+        if (m->type == NODE_STATE_DECL && m->as.state_decl.init) {
+            fprintf(o, "    av_set(self, \"%s\", ", m->as.state_decl.name);
+            gen_expr_as(m->as.state_decl.init, CG_OTHER, o);
+            fputs(");\n", o);
+        }
+    }
+    g_cur_comp = NULL;
+    fputs("    return self;\n}\n\n", o);
+}
+
+static void gen_render_fn(Node *comp, FILE *o) {
+    g_cur_comp = comp;
+    fprintf(o, "static AV af_render_%s(AV self) {\n    (void)self;\n", comp->as.component.name);
+    if (comp->as.component.render_body)
+        gen_ui_render(comp->as.component.render_body, o, 0, 1);
+    fputs("    return av_nil();\n}\n\n", o);
+    g_cur_comp = NULL;
+}
+
+static void gen_comp_protos(Node *comp, FILE *o) {
+    const char *cn = comp->as.component.name;
+    fprintf(o, "static AV af_mount_%s(void);\n", cn);
+    fprintf(o, "static AV af_render_%s(AV self);\n", cn);
+    NodeList *ms = &comp->as.component.members;
+    for (int i = 0; i < ms->count; i++) {
+        if (ms->items[i]->type != NODE_FN_DECL) continue;
+        Node *fn = ms->items[i];
+        fprintf(o, "static AV af_%s_%s(AV self", cn, fn->as.fn_decl.name);
+        NodeList *ps = &fn->as.fn_decl.params;
+        for (int j = 0; j < ps->count; j++)
+            fprintf(o, ", %s a_%s", cty(ps->items[j]->ty), ps->items[j]->as.param.name);
+        fputs(");\n", o);
+    }
+}
+
+/* Runtime dispatchers: pick the right per-component function by the instance's
+ * type name (matching the interpreter's dynamic dispatch). */
+static void gen_dispatchers(FILE *o) {
+    NodeList *d = &g_program->as.program.declarations;
+    fputs("static AV abyss_render(AV self) {\n", o);
+    fputs("    if (self.k == AV_STRUCT) {\n        const char *t = self.u.o->name;\n", o);
+    for (int i = 0; i < d->count; i++)
+        if (d->items[i]->type == NODE_COMPONENT) {
+            const char *cn = d->items[i]->as.component.name;
+            fprintf(o, "        if (!strcmp(t, \"%s\")) return af_render_%s(self);\n", cn, cn);
+        }
+    fputs("    }\n", o);
+    fputs("    fprintf(stderr, \"abyss runtime error: render() needs a mounted component instance\\n\"); exit(70);\n", o);
+    fputs("}\n\n", o);
+
+    fputs("static AV abyss_method(AV self, const char *m, int argc, AV *args) {\n", o);
+    fputs("    (void)argc; (void)args;\n", o);
+    fputs("    if (self.k == AV_STRUCT) {\n        const char *t = self.u.o->name;\n", o);
+    for (int i = 0; i < d->count; i++) {
+        if (d->items[i]->type != NODE_COMPONENT) continue;
+        Node *comp = d->items[i];
+        const char *cn = comp->as.component.name;
+        fprintf(o, "        if (!strcmp(t, \"%s\")) {\n", cn);
+        NodeList *ms = &comp->as.component.members;
+        for (int j = 0; j < ms->count; j++) {
+            if (ms->items[j]->type != NODE_FN_DECL) continue;
+            Node *fn = ms->items[j];
+            fprintf(o, "            if (!strcmp(m, \"%s\")) return af_%s_%s(self", fn->as.fn_decl.name, cn, fn->as.fn_decl.name);
+            NodeList *ps = &fn->as.fn_decl.params;
+            for (int k = 0; k < ps->count; k++) {
+                int pt = norm(ps->items[k]->ty);
+                const char *unbox = pt == CG_INT ? "av_as_int" : pt == CG_FLOAT ? "av_num"
+                                  : pt == CG_BOOL ? "av_truthy" : "av_id";
+                fprintf(o, ", %s(args[%d])", unbox, k);
+            }
+            fputs(");\n", o);
+        }
+        fputs("        }\n", o);
+    }
+    fputs("    }\n", o);
+    fputs("    fprintf(stderr, \"abyss runtime error: no such method '%s'\\n\", m); exit(70);\n", o);
+    fputs("}\n\n", o);
+}
+
 int emit_c(Node *program, FILE *o) {
     g_unsupported = 0;
     g_tmp = 0;
+    g_cur_comp = NULL;
     g_program = program;
     NodeList *decls = &program->as.program.declarations;
 
@@ -692,12 +941,35 @@ int emit_c(Node *program, FILE *o) {
         if (decls->items[i]->type == NODE_FN_DECL) {
             gen_fn_proto(decls->items[i], o); fputs(";\n", o);
         }
+
+    /* component function prototypes + the dispatchers they (and top-level code)
+     * call. The dispatchers are always emitted — a program may call render()/a
+     * method on a non-component, which must compile and fail at runtime (as in
+     * the interpreter), not fail to link. */
+    for (int i = 0; i < decls->count; i++)
+        if (decls->items[i]->type == NODE_COMPONENT)
+            gen_comp_protos(decls->items[i], o);
+    fputs("static AV abyss_render(AV self);\n", o);
+    fputs("static AV abyss_method(AV self, const char *m, int argc, AV *args);\n", o);
     fputc('\n', o);
 
     /* function bodies */
     for (int i = 0; i < decls->count; i++)
         if (decls->items[i]->type == NODE_FN_DECL)
             gen_fn(decls->items[i], o);
+
+    /* component bodies: methods, mount, render */
+    for (int i = 0; i < decls->count; i++) {
+        if (decls->items[i]->type != NODE_COMPONENT) continue;
+        Node *comp = decls->items[i];
+        NodeList *ms = &comp->as.component.members;
+        for (int j = 0; j < ms->count; j++)
+            if (ms->items[j]->type == NODE_FN_DECL)
+                gen_method(comp, ms->items[j], o);
+        gen_mount(comp, o);
+        gen_render_fn(comp, o);
+    }
+    gen_dispatchers(o);
 
     /* global initialisers */
     fputs("static void abyss_init_globals(void) {\n", o);

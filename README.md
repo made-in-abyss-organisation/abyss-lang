@@ -54,9 +54,10 @@ assignment, `len`/`push`, `for`-iteration, nesting), string concat and
 `${...}` interpolation, `print`. The front-end also parses the
 `component`/`state`/`render` UI tree. (The C backend now covers everything the
 interpreter runs — functions, control flow, arithmetic, strings, `print`,
-`struct`s, `match` and `List`s — kept honest by a differential test harness
-that builds on macOS, Linux **and Windows** and asserts the interpreter and
-native binary print identical output.) See
+`struct`s, `match`, `List`s and now **`component`/`state`/`render`** (mount,
+methods, reactive re-render) — kept honest by a differential test harness that
+builds on macOS, Linux **and Windows** and asserts the interpreter and native
+binary print identical output.) See
 [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Build & run
