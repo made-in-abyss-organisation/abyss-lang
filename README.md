@@ -100,6 +100,25 @@ Requires a C11 compiler. On macOS/Linux any of `cc`/`clang`/`gcc` works; on
 Windows use **clang** (the C the backend emits uses GNU statement-expressions
 and `_Generic`, which MSVC does not accept).
 
+## Run on Android
+
+An Abyss program can be compiled to a native binary and run on an Android
+device or emulator (as a console app — the `component`/`render` runtime renders
+to a text widget tree for now). With the Android SDK + NDK installed and a
+device/emulator connected (`adb devices`):
+
+```powershell
+pwsh scripts/android_run.ps1 examples/counter_app.aby   # Windows
+```
+```sh
+scripts/android_run.sh examples/counter_app.aby         # macOS / Linux
+```
+
+The script emits C, cross-compiles it with the NDK clang for the device's ABI
+(linked with `-Wl,-z,max-page-size=16384` for Android's 16 KB pages), pushes it
+with `adb`, and runs it. The on-device output is byte-identical to the
+interpreter. (A graphical Skia surface and an APK wrapper are later milestones.)
+
 ## CI & releases
 
 - **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) builds `abyssc`

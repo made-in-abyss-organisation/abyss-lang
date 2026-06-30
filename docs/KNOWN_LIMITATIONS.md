@@ -55,6 +55,24 @@ fuzzed (see the adversarial test pass); they agree on all tested programs
 - Integer division/modulo by zero now raises the same clean runtime error
   (exit 70) in both backends instead of C undefined behaviour.
 
+## Android (native execution)
+
+- An Abyss program runs on the **Android emulator** today as a native *console*
+  binary: `scripts/android_run.ps1` / `scripts/android_run.sh` emit C, cross-
+  compile it with the NDK clang for the device's ABI, push it with `adb`, and
+  run it. `examples/counter_app.aby` produces output byte-identical to the
+  interpreter on an x86_64 / API 36 emulator.
+- Two things the runner must get right (and does):
+  - **ABI match** — it reads `ro.product.cpu.abi`; a desktop emulator is usually
+    `x86_64`, a phone `arm64-v8a`. Running the wrong-ABI binary fails in the
+    translation loader (`missing DT_SYMTAB`).
+  - **16 KB pages** — recent Android images use a 16 KB page size, so the binary
+    is linked with `-Wl,-z,max-page-size=16384`; without it the loader SIGSEGVs.
+- Not yet: a **graphical** surface (the render target is still a text widget
+  tree — Skia binding is Phase 6 proper), an **APK** wrapper / `NativeActivity`,
+  and **iOS**. So this is "Abyss native code executing on Android," not yet a
+  store-installable GUI app.
+
 ## Notes
 
 - The native `??` lowering uses a GCC/Clang statement-expression; the generated
