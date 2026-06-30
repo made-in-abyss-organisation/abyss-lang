@@ -9,7 +9,7 @@
 
 typedef enum {
     TY_NIL, TY_INT, TY_FLOAT, TY_BOOL, TY_STRING, TY_VOID,
-    TY_RANGE, TY_STRUCT, TY_STRUCT_DEF, TY_FN, TY_ANY, TY_ERROR
+    TY_RANGE, TY_LIST, TY_STRUCT, TY_STRUCT_DEF, TY_FN, TY_ANY, TY_ERROR
 } TypeKind;
 
 typedef struct {
@@ -80,7 +80,8 @@ static const char *kind_name(TypeKind k) {
         case TY_NIL: return "Nil"; case TY_INT: return "Int";
         case TY_FLOAT: return "Float"; case TY_BOOL: return "Bool";
         case TY_STRING: return "String"; case TY_VOID: return "Void";
-        case TY_RANGE: return "Range"; case TY_STRUCT: return "struct";
+        case TY_RANGE: return "Range"; case TY_LIST: return "List";
+        case TY_STRUCT: return "struct";
         case TY_STRUCT_DEF: return "type"; case TY_FN: return "function";
         default: return "?";
     }
@@ -96,6 +97,7 @@ static Type type_from_name(const char *name) {
     if (n == 5 && !strncmp(name, "Float", 5))  return ty(TY_FLOAT);
     if (n == 4 && !strncmp(name, "Bool", 4))   return ty(TY_BOOL);
     if (n == 6 && !strncmp(name, "String", 6)) return ty(TY_STRING);
+    if (n == 4 && !strncmp(name, "List", 4))   return ty(TY_LIST);
     Type t;
     char saved = name[n];
     ((char *)name)[n] = '\0';
@@ -145,7 +147,27 @@ static Type check_call(Node *n, TypeEnv *env) {
         argv[i] = check_expr(n->as.call.args.items[i], env);
 
     if (callee.kind == TY_FN) {
-        if (callee.decl == NULL) return ty(TY_NIL);   /* builtin (print): variadic */
+        if (callee.decl == NULL) {   /* builtin: variadic, typed by name */
+            if (n->as.call.callee->type == NODE_IDENT) {
+                const char *bn = n->as.call.callee->as.ident.name;
+                if (!strcmp(bn, "len")) {
+                    if (argc != 1) terror(n->line, "'len' expects 1 argument, got %d", argc);
+                    else if (!is_unknown(argv[0].kind) &&
+                             argv[0].kind != TY_LIST && argv[0].kind != TY_STRING)
+                        terror(n->line, "'len' expects a List or String, got %s",
+                               kind_name(argv[0].kind));
+                    return ty(TY_INT);
+                }
+                if (!strcmp(bn, "push")) {
+                    if (argc != 2) terror(n->line, "'push' expects 2 arguments, got %d", argc);
+                    else if (!is_unknown(argv[0].kind) && argv[0].kind != TY_LIST)
+                        terror(n->line, "'push' expects a List as its first argument, got %s",
+                               kind_name(argv[0].kind));
+                    return ty(TY_NIL);
+                }
+            }
+            return ty(TY_NIL);   /* print, etc. */
+        }
         NodeList *ps = &callee.decl->as.fn_decl.params;
         const char *fname = callee.decl->as.fn_decl.name;
         if (argc != ps->count) {
@@ -248,6 +270,17 @@ static Type check_assign(Node *n, TypeEnv *env) {
         }
         return vt;
     }
+    if (target->type == NODE_INDEX) {
+        Type c = check_expr(target->as.index.collection, env);
+        Type idx = check_expr(target->as.index.index, env);
+        if (!is_unknown(c.kind) && c.kind != TY_LIST)
+            terror(n->line, "cannot index-assign a value of type %s", kind_name(c.kind));
+        if (!is_unknown(idx.kind) && idx.kind != TY_INT)
+            terror(n->line, "list index must be Int, got %s", kind_name(idx.kind));
+        if (compound && !is_unknown(vt.kind) && !is_num(vt.kind))
+            terror(n->line, "'%s' needs a number", n->as.assign.op);
+        return vt;
+    }
     if (target->type == NODE_IDENT) {
         Type tt;
         if (!te_get(env, target->as.ident.name, &tt)) {
@@ -339,6 +372,20 @@ static Type check_expr_inner(Node *n, TypeEnv *env) {
                 terror(n->line, "range bounds must be Int");
             return ty(TY_RANGE);
         }
+        case NODE_LIST: {
+            for (int i = 0; i < n->as.list.elements.count; i++)
+                check_expr(n->as.list.elements.items[i], env);
+            return ty(TY_LIST);   /* elements are kept boxed; element type is dynamic */
+        }
+        case NODE_INDEX: {
+            Type c = check_expr(n->as.index.collection, env);
+            Type i = check_expr(n->as.index.index, env);
+            if (!is_unknown(c.kind) && c.kind != TY_LIST && c.kind != TY_STRING)
+                terror(n->line, "cannot index a value of type %s", kind_name(c.kind));
+            if (!is_unknown(i.kind) && i.kind != TY_INT)
+                terror(n->line, "list index must be Int, got %s", kind_name(i.kind));
+            return ty(TY_ANY);   /* element type is dynamic in v1 */
+        }
         default: return ty(TY_ANY);
     }
 }
@@ -393,10 +440,12 @@ static void check_stmt(Node *n, TypeEnv *env) {
         }
         case NODE_FOR: {
             Type it = check_expr(n->as.for_stmt.iterable, env);
-            if (!is_unknown(it.kind) && it.kind != TY_RANGE)
-                terror(n->line, "'for ... in' needs a range, got %s", kind_name(it.kind));
+            if (!is_unknown(it.kind) && it.kind != TY_RANGE && it.kind != TY_LIST)
+                terror(n->line, "'for ... in' needs a Range or List, got %s", kind_name(it.kind));
             TypeEnv *scope = te_new(env);
-            te_define(scope, n->as.for_stmt.var_name, ty(TY_INT));
+            /* range yields Int; a list yields dynamically-typed (boxed) elements */
+            te_define(scope, n->as.for_stmt.var_name,
+                      it.kind == TY_RANGE ? ty(TY_INT) : ty(TY_ANY));
             check_stmt(n->as.for_stmt.body, scope);
             break;
         }
@@ -428,6 +477,8 @@ int typecheck(Node *program) {
     g_errors = 0;
     g_globals = te_new(NULL);
     te_define(g_globals, "print", ty_fn(NULL));  /* builtin, variadic */
+    te_define(g_globals, "len", ty_fn(NULL));    /* builtin: List|String -> Int */
+    te_define(g_globals, "push", ty_fn(NULL));   /* builtin: (List, T) -> Nil   */
 
     NodeList *decls = &program->as.program.declarations;
 

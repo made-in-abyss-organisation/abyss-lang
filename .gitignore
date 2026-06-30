@@ -1,5 +1,8 @@
 # build artifacts
 *.o
+*.obj
+*.pdb
+*.ilk
 *.a
 *.out
 *.exe

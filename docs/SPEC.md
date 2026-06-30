@@ -32,6 +32,24 @@ language itself via `component` / `state` / `render`.
 - A type is non-nullable unless suffixed with `?` (e.g. `String?`).
 - `?.` performs a safe call; `??` provides a default.
 
+## Collections
+
+- **`List`** is the built-in growable sequence. A list literal is written
+  `[a, b, c]` (the empty list is `[]`); elements may be any value and a list may
+  nest (`[[1, 2], [3, 4]]`). Lists are a **reference type** — passing one to a
+  function or assigning it shares the same underlying storage.
+- **Indexing**: `xs[i]` reads the `i`-th element (0-based); `xs[i] = v` and the
+  compound forms `xs[i] += v` / `xs[i] -= v` write it. An out-of-range index is
+  a runtime error.
+- **Iteration**: `for x in xs { ... }` walks the elements in order (the same
+  `for` that ranges over `0..n`).
+- **Builtins**: `len(x)` returns the element count of a `List` (or the byte
+  length of a `String`) as an `Int`; `push(xs, v)` appends `v` to `xs`.
+
+In the current release a list's element type is dynamic (elements are boxed);
+homogeneous, unboxed lists and `Map` are planned (see `docs/ROADMAP.md`,
+Phase 5b).
+
 ## Grammar (EBNF)
 
 ```ebnf
@@ -91,10 +109,12 @@ term           = factor , { ( "+" | "-" ) , factor } ;
 factor         = unary , { ( "*" | "/" | "%" ) , unary } ;
 unary          = ( "!" | "-" ) , unary | postfix ;
 postfix        = primary , { "." , IDENT | "?." , IDENT
-                           | "(" , [ args ] , ")" | "??" , unary } ;
+                           | "(" , [ args ] , ")" | "[" , expr , "]"
+                           | "??" , unary } ;
 primary        = NUMBER | STRING | "true" | "false" | "nil"
-               | IDENT | "(" , expr , ")" | interpString ;
+               | IDENT | "(" , expr , ")" | interpString | listLiteral ;
 interpString   = '"' , { CHAR | "${" , expr , "}" } , '"' ;
+listLiteral    = "[" , [ expr , { "," , expr } ] , "]" ;
 args           = expr , { "," , expr } ;
 
 pattern        = IDENT [ "(" , [ IDENT { "," , IDENT } ] , ")" ] | "_" ;

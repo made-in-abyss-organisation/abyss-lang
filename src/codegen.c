@@ -69,10 +69,12 @@ static void gen_prelude(FILE *o) {
     fputs("#include <stdlib.h>\n", o);
     fputs("#include <string.h>\n", o);
     fputs("#include <stdarg.h>\n\n", o);
-    fputs("typedef enum { AV_NIL, AV_BOOL, AV_INT, AV_FLOAT, AV_STR, AV_STRUCT } AVKind;\n", o);
+    fputs("typedef enum { AV_NIL, AV_BOOL, AV_INT, AV_FLOAT, AV_STR, AV_STRUCT, AV_LIST } AVKind;\n", o);
     fputs("typedef struct AObj AObj;\n", o);
-    fputs("typedef struct { AVKind k; union { long long i; double f; int b; const char *s; AObj *o; } u; } AV;\n", o);
-    fputs("struct AObj { const char *name; int n; const char **names; AV *vals; };\n\n", o);
+    fputs("typedef struct AList AList;\n", o);
+    fputs("typedef struct { AVKind k; union { long long i; double f; int b; const char *s; AObj *o; AList *l; } u; } AV;\n", o);
+    fputs("struct AObj { const char *name; int n; const char **names; AV *vals; };\n", o);
+    fputs("struct AList { int n; int cap; AV *items; };\n\n", o);
     fputs("static AV av_nil(void){ AV v; v.k=AV_NIL; v.u.i=0; return v; }\n", o);
     fputs("static AV av_int(long long i){ AV v; v.k=AV_INT; v.u.i=i; return v; }\n", o);
     fputs("static AV av_inti(int i){ AV v; v.k=AV_INT; v.u.i=i; return v; }\n", o);
@@ -91,6 +93,13 @@ static void gen_prelude(FILE *o) {
     fputs("static int av_isnum(AV v){ return v.k==AV_INT||v.k==AV_FLOAT; }\n", o);
     fputs("static double av_num(AV v){ return v.k==AV_INT?(double)v.u.i:v.u.f; }\n", o);
     fputs("static long long av_as_int(AV v){ return v.k==AV_INT?v.u.i:(long long)av_num(v); }\n", o);
+    /* lists: a heap object holding a growable array of AV. Reference semantics
+     * (the AV holds a pointer), matching the interpreter's AbyssList. */
+    fputs("static AV av_list(int n, AV *items){ AList *l=malloc(sizeof(AList)); l->n=n; l->cap=n?n:1; l->items=malloc(sizeof(AV)*l->cap); for(int i=0;i<n;i++) l->items[i]=items[i]; AV v; v.k=AV_LIST; v.u.l=l; return v; }\n", o);
+    fputs("static AV av_index(AV c, AV i){ long long idx=av_as_int(i); if(c.k!=AV_LIST){ fprintf(stderr,\"abyss runtime error: cannot index a non-list value\\n\"); exit(70);} AList *l=c.u.l; if(idx<0||idx>=l->n){ fprintf(stderr,\"abyss runtime error: list index out of range\\n\"); exit(70);} return l->items[idx]; }\n", o);
+    fputs("static AV av_setidx(AV c, AV i, AV val){ long long idx=av_as_int(i); if(c.k!=AV_LIST){ fprintf(stderr,\"abyss runtime error: cannot index-assign a non-list value\\n\"); exit(70);} AList *l=c.u.l; if(idx<0||idx>=l->n){ fprintf(stderr,\"abyss runtime error: list index out of range\\n\"); exit(70);} l->items[idx]=val; return val; }\n", o);
+    fputs("static AV av_len(AV v){ if(v.k==AV_LIST)return av_int(v.u.l->n); if(v.k==AV_STR)return av_int((long long)strlen(v.u.s)); fprintf(stderr,\"abyss runtime error: len() needs a list or string\\n\"); exit(70); }\n", o);
+    fputs("static AV av_push(AV c, AV val){ if(c.k!=AV_LIST){ fprintf(stderr,\"abyss runtime error: push() needs a list as its first argument\\n\"); exit(70);} AList *l=c.u.l; if(l->n+1>l->cap){ l->cap=l->cap<4?4:l->cap*2; l->items=realloc(l->items,sizeof(AV)*l->cap);} l->items[l->n++]=val; return av_nil(); }\n", o);
     fputs("static int av_truthy(AV v){ if(v.k==AV_NIL)return 0; if(v.k==AV_BOOL)return v.u.b; if(v.k==AV_INT)return v.u.i!=0; if(v.k==AV_FLOAT)return v.u.f!=0.0; return 1; }\n", o);
     fputs("static AV av_add(AV a, AV b){ if(a.k==AV_STR&&b.k==AV_STR){ char *s=malloc(strlen(a.u.s)+strlen(b.u.s)+1); strcpy(s,a.u.s); strcat(s,b.u.s); return av_str(s);} if(a.k==AV_INT&&b.k==AV_INT)return av_int(a.u.i+b.u.i); return av_float(av_num(a)+av_num(b)); }\n", o);
     fputs("static AV av_sub(AV a, AV b){ if(a.k==AV_INT&&b.k==AV_INT)return av_int(a.u.i-b.u.i); return av_float(av_num(a)-av_num(b)); }\n", o);
@@ -109,8 +118,10 @@ static void gen_prelude(FILE *o) {
     fputs("static AV av_neg(AV a){ if(a.k==AV_INT)return av_int(-a.u.i); return av_float(-av_num(a)); }\n", o);
     fputs("static AV av_not(AV a){ return av_bool(!av_truthy(a)); }\n", o);
     fputs("static AV av_coalesce(AV a, AV b){ return a.k==AV_NIL?b:a; }\n", o);
-    fputs("static AV av_tostr(AV v){ if(v.k==AV_STR)return v; if(v.k==AV_STRUCT)return av_str(\"<fn>\"); char buf[64]; if(v.k==AV_INT)snprintf(buf,sizeof buf,\"%lld\",v.u.i); else if(v.k==AV_FLOAT)snprintf(buf,sizeof buf,\"%g\",v.u.f); else if(v.k==AV_BOOL)snprintf(buf,sizeof buf,\"%s\",v.u.b?\"true\":\"false\"); else snprintf(buf,sizeof buf,\"nil\"); char *s=malloc(strlen(buf)+1); strcpy(s,buf); return av_str(s); }\n", o);
-    fputs("static void av_print1(AV v){ if(v.k==AV_NIL)printf(\"nil\"); else if(v.k==AV_BOOL)printf(\"%s\",v.u.b?\"true\":\"false\"); else if(v.k==AV_INT)printf(\"%lld\",v.u.i); else if(v.k==AV_FLOAT)printf(\"%g\",v.u.f); else if(v.k==AV_STR)printf(\"%s\",v.u.s); else if(v.k==AV_STRUCT){ AObj *o=v.u.o; printf(\"%s { \",o->name); for(int i=0;i<o->n;i++){ if(i)printf(\", \"); printf(\"%s: \",o->names[i]); av_print1(o->vals[i]); } printf(\" }\"); } }\n", o);
+    /* append a C string to a growable buffer (used to stringify lists) */
+    fputs("static void av_strapp(char **buf, size_t *cap, size_t *len, const char *s){ size_t n=strlen(s); while(*len+n+1>*cap){ *cap*=2; *buf=realloc(*buf,*cap);} memcpy(*buf+*len,s,n+1); *len+=n; }\n", o);
+    fputs("static AV av_tostr(AV v){ if(v.k==AV_STR)return v; if(v.k==AV_LIST){ AList *l=v.u.l; size_t cap=8,len=0; char *b=malloc(cap); b[0]=0; av_strapp(&b,&cap,&len,\"[\"); for(int i=0;i<l->n;i++){ if(i)av_strapp(&b,&cap,&len,\", \"); AV e=av_tostr(l->items[i]); av_strapp(&b,&cap,&len,e.u.s); } av_strapp(&b,&cap,&len,\"]\"); return av_str(b); } if(v.k==AV_STRUCT)return av_str(\"<fn>\"); char buf[64]; if(v.k==AV_INT)snprintf(buf,sizeof buf,\"%lld\",v.u.i); else if(v.k==AV_FLOAT)snprintf(buf,sizeof buf,\"%g\",v.u.f); else if(v.k==AV_BOOL)snprintf(buf,sizeof buf,\"%s\",v.u.b?\"true\":\"false\"); else snprintf(buf,sizeof buf,\"nil\"); char *s=malloc(strlen(buf)+1); strcpy(s,buf); return av_str(s); }\n", o);
+    fputs("static void av_print1(AV v){ if(v.k==AV_NIL)printf(\"nil\"); else if(v.k==AV_BOOL)printf(\"%s\",v.u.b?\"true\":\"false\"); else if(v.k==AV_INT)printf(\"%lld\",v.u.i); else if(v.k==AV_FLOAT)printf(\"%g\",v.u.f); else if(v.k==AV_STR)printf(\"%s\",v.u.s); else if(v.k==AV_LIST){ AList *l=v.u.l; printf(\"[\"); for(int i=0;i<l->n;i++){ if(i)printf(\", \"); av_print1(l->items[i]); } printf(\"]\"); } else if(v.k==AV_STRUCT){ AObj *o=v.u.o; printf(\"%s { \",o->name); for(int i=0;i<o->n;i++){ if(i)printf(\", \"); printf(\"%s: \",o->names[i]); av_print1(o->vals[i]); } printf(\" }\"); } }\n", o);
     fputs("static AV av_print(int n, ...){ va_list ap; va_start(ap,n); for(int i=0;i<n;i++){ if(i)printf(\" \"); AV v=va_arg(ap,AV); av_print1(v);} va_end(ap); printf(\"\\n\"); return av_nil(); }\n\n", o);
 }
 
@@ -211,13 +222,16 @@ static int expr_cgty(Node *n) {
             if (n->as.assign.op[0] == '=') return tt;
             return is_native(tt) ? tt : CG_OTHER;     /* compound += / -= */
         }
+        case NODE_LIST:        /* list literals and subscripts are always boxed AV */
+        case NODE_INDEX:
+            return CG_OTHER;
         case NODE_CALL: {
             Node *callee = n->as.call.callee;
             if (callee->type == NODE_IDENT && strcmp(callee->as.ident.name, "print") != 0) {
                 Node *fn = find_fn(callee->as.ident.name);
                 if (fn) return norm(fn->ty);
             }
-            return CG_OTHER;
+            return CG_OTHER;   /* builtins (len/push) and unknown callees: boxed */
         }
         default:
             return CG_OTHER;
@@ -437,6 +451,23 @@ static int gen_expr(Node *n, FILE *o) {
                 gen_expr_as(n->as.assign.value, CG_OTHER, o); fputs(")); })", o);
                 return CG_OTHER;
             }
+            if (tgt->type == NODE_INDEX) {           /* element assignment: xs[i] = v */
+                const char *aop = n->as.assign.op;
+                if (aop[0] == '=') {
+                    fputs("av_setidx(", o); gen_expr_as(tgt->as.index.collection, CG_OTHER, o);
+                    fputs(", ", o); gen_expr_as(tgt->as.index.index, CG_OTHER, o);
+                    fputs(", ", o); gen_expr_as(n->as.assign.value, CG_OTHER, o); fputc(')', o);
+                    return CG_OTHER;
+                }
+                /* compound xs[i] += v : evaluate collection & index once (statement-expr) */
+                int id = g_tmp++;
+                const char *afn = aop[0] == '+' ? "av_add" : "av_sub";
+                fprintf(o, "({ AV _c%d = ", id); gen_expr_as(tgt->as.index.collection, CG_OTHER, o);
+                fprintf(o, "; AV _i%d = ", id); gen_expr_as(tgt->as.index.index, CG_OTHER, o);
+                fprintf(o, "; av_setidx(_c%d, _i%d, %s(av_index(_c%d, _i%d), ", id, id, afn, id, id);
+                gen_expr_as(n->as.assign.value, CG_OTHER, o); fputs(")); })", o);
+                return CG_OTHER;
+            }
             if (tgt->type != NODE_IDENT) { g_unsupported++; fputs("av_nil()", o); return CG_OTHER; }
             const char *name = tgt->as.ident.name;
             const char *op = n->as.assign.op;
@@ -462,6 +493,17 @@ static int gen_expr(Node *n, FILE *o) {
                 fprintf(o, "av_print(%d", args->count);
                 for (int i = 0; i < args->count; i++) { fputs(", ", o); gen_expr_as(args->items[i], CG_OTHER, o); }
                 fputc(')', o);
+                return CG_OTHER;
+            }
+            if (callee->type == NODE_IDENT && !strcmp(callee->as.ident.name, "len") &&
+                args->count == 1) {
+                fputs("av_len(", o); gen_expr_as(args->items[0], CG_OTHER, o); fputc(')', o);
+                return CG_OTHER;
+            }
+            if (callee->type == NODE_IDENT && !strcmp(callee->as.ident.name, "push") &&
+                args->count == 2) {
+                fputs("av_push(", o); gen_expr_as(args->items[0], CG_OTHER, o);
+                fputs(", ", o); gen_expr_as(args->items[1], CG_OTHER, o); fputc(')', o);
                 return CG_OTHER;
             }
             if (callee->type == NODE_IDENT) {
@@ -503,6 +545,21 @@ static int gen_expr(Node *n, FILE *o) {
         case NODE_GET:
             fputs("av_get(", o); gen_expr_as(n->as.get.object, CG_OTHER, o);
             fprintf(o, ", \"%s\", %d)", n->as.get.name, n->as.get.safe ? 1 : 0);
+            return CG_OTHER;
+        case NODE_LIST: {
+            int cnt = n->as.list.elements.count;
+            if (cnt == 0) { fputs("av_list(0, NULL)", o); return CG_OTHER; }
+            fprintf(o, "av_list(%d, (AV[]){", cnt);
+            for (int i = 0; i < cnt; i++) {
+                if (i) fputs(", ", o);
+                gen_expr_as(n->as.list.elements.items[i], CG_OTHER, o);
+            }
+            fputs("})", o);
+            return CG_OTHER;
+        }
+        case NODE_INDEX:
+            fputs("av_index(", o); gen_expr_as(n->as.index.collection, CG_OTHER, o);
+            fputs(", ", o); gen_expr_as(n->as.index.index, CG_OTHER, o); fputc(')', o);
             return CG_OTHER;
         case NODE_MATCH:
             return gen_match(n, o);
@@ -572,9 +629,18 @@ static void gen_stmt(Node *n, FILE *o, int ind) {
                 fprintf(o, "long long a_%s = _k%d;\n", n->as.for_stmt.var_name, id);
                 gen_stmt(n->as.for_stmt.body, o, ind + 2);
                 indent(o, ind + 1); fputs("}\n", o);
-            } else {
-                g_unsupported++;
-                indent(o, ind + 1); fputs("/* unsupported for-iterable */\n", o);
+            } else {   /* iterate a list (or any boxed iterable, checked at runtime) */
+                indent(o, ind + 1); fprintf(o, "AV _lst%d = ", id);
+                gen_expr_as(it, CG_OTHER, o); fputs(";\n", o);
+                indent(o, ind + 1);
+                fprintf(o, "if (_lst%d.k != AV_LIST) { fprintf(stderr, \"abyss runtime error: "
+                           "'for ... in' requires a range (e.g. 0..10) or a list\\n\"); exit(70); }\n", id);
+                indent(o, ind + 1);
+                fprintf(o, "for (int _i%d = 0; _i%d < _lst%d.u.l->n; _i%d++) {\n", id, id, id, id);
+                indent(o, ind + 2);
+                fprintf(o, "AV a_%s = _lst%d.u.l->items[_i%d];\n", n->as.for_stmt.var_name, id, id);
+                gen_stmt(n->as.for_stmt.body, o, ind + 2);
+                indent(o, ind + 1); fputs("}\n", o);
             }
             indent(o, ind); fputs("}\n", o);
             break;

@@ -61,6 +61,23 @@ struct Instance {
     int count;
 };
 
+/* ---------- lists ---------- */
+
+struct AbyssList {
+    Value *items;
+    int count, cap;
+};
+
+static AbyssList *list_new(void) { return (AbyssList *)calloc(1, sizeof(AbyssList)); }
+
+static void list_push(AbyssList *l, Value v) {
+    if (l->count + 1 > l->cap) {
+        l->cap = l->cap < 4 ? 4 : l->cap * 2;
+        l->items = (Value *)realloc(l->items, sizeof(Value) * l->cap);
+    }
+    l->items[l->count++] = v;
+}
+
 /* ---------- value helpers ---------- */
 
 static Value v_nil(void)            { Value v; v.type = VAL_NIL; return v; }
@@ -73,6 +90,7 @@ static Value v_native(NativeFn fn)  { Value v; v.type = VAL_NATIVE; v.as.native 
 static Value v_struct_def(Node *d)  { Value v; v.type = VAL_STRUCT_DEF; v.as.struct_def.decl = d; return v; }
 static Value v_instance(Instance *i){ Value v; v.type = VAL_INSTANCE; v.as.instance = i; return v; }
 static Value v_range(long long a, long long b) { Value v; v.type = VAL_RANGE; v.as.range.start = a; v.as.range.end = b; return v; }
+static Value v_list(AbyssList *l)   { Value v; v.type = VAL_LIST; v.as.list = l; return v; }
 
 static int is_num(Value v)   { return v.type == VAL_INT || v.type == VAL_FLOAT; }
 static double as_num(Value v){ return v.type == VAL_INT ? (double)v.as.integer : v.as.floating; }
@@ -108,6 +126,16 @@ static void print_value(Value v) {
         case VAL_NATIVE: printf("<native fn>"); break;
         case VAL_STRUCT_DEF: printf("<struct %s>", v.as.struct_def.decl->as.struct_decl.name); break;
         case VAL_RANGE:  printf("%lld..%lld", v.as.range.start, v.as.range.end); break;
+        case VAL_LIST: {
+            AbyssList *l = v.as.list;
+            printf("[");
+            for (int i = 0; i < l->count; i++) {
+                if (i) printf(", ");
+                print_value(l->items[i]);
+            }
+            printf("]");
+            break;
+        }
         case VAL_INSTANCE: {
             Instance *in = v.as.instance;
             printf("%s { ", in->decl->as.struct_decl.name);
@@ -133,6 +161,22 @@ static Value native_print(int argc, Value *argv) {
     return v_nil();
 }
 
+static Value native_len(int argc, Value *argv) {
+    if (argc != 1) runtime_error("len() takes exactly 1 argument");
+    Value v = argv[0];
+    if (v.type == VAL_LIST)   return v_int(v.as.list->count);
+    if (v.type == VAL_STRING) return v_int((long long)strlen(v.as.string));
+    runtime_error("len() needs a list or string");
+    return v_nil();
+}
+
+static Value native_push(int argc, Value *argv) {
+    if (argc != 2) runtime_error("push() takes exactly 2 arguments");
+    if (argv[0].type != VAL_LIST) runtime_error("push() needs a list as its first argument");
+    list_push(argv[0].as.list, argv[1]);
+    return v_nil();
+}
+
 /* ---------- evaluation ---------- */
 
 typedef enum { EXEC_NORMAL, EXEC_RETURN } ExecStatus;
@@ -155,6 +199,25 @@ static char *value_to_cstr(Value v) {
         case VAL_FLOAT:  snprintf(buf, sizeof buf, "%g", v.as.floating);  return copy_cstr(buf);
         case VAL_BOOL:   return copy_cstr(v.as.boolean ? "true" : "false");
         case VAL_NIL:    return copy_cstr("nil");
+        case VAL_LIST: {
+            AbyssList *l = v.as.list;
+            size_t cap = 8, len = 0;
+            char *out = (char *)malloc(cap);
+            out[0] = '\0';
+            #define APPEND(str) do { const char *_s = (str); size_t _n = strlen(_s); \
+                while (len + _n + 1 > cap) { cap *= 2; out = (char *)realloc(out, cap); } \
+                memcpy(out + len, _s, _n + 1); len += _n; } while (0)
+            APPEND("[");
+            for (int i = 0; i < l->count; i++) {
+                if (i) APPEND(", ");
+                char *es = value_to_cstr(l->items[i]);
+                APPEND(es);
+                free(es);
+            }
+            APPEND("]");
+            #undef APPEND
+            return out;
+        }
         default:         return copy_cstr("<fn>");
     }
 }
@@ -369,8 +432,26 @@ static Value eval(Node *n, Env *env) {
                               in->decl->as.struct_decl.name, target->as.get.name);
             }
 
+            if (target->type == NODE_INDEX) {        /* element assignment xs[i] = v */
+                Value c = eval(target->as.index.collection, env);
+                Value iv = eval(target->as.index.index, env);
+                if (c.type != VAL_LIST)
+                    runtime_error("cannot index-assign a non-list value");
+                if (iv.type != VAL_INT)
+                    runtime_error("list index must be an integer");
+                AbyssList *l = c.as.list;
+                if (iv.as.integer < 0 || iv.as.integer >= l->count)
+                    runtime_error("list index out of range");
+                if (op[0] != '=') {
+                    char binop[2] = { op[0], '\0' };
+                    value = apply_binary(binop, l->items[iv.as.integer], value);
+                }
+                l->items[iv.as.integer] = value;
+                return value;
+            }
+
             if (target->type != NODE_IDENT)
-                runtime_error("can only assign to a variable or field");
+                runtime_error("can only assign to a variable, field, or list element");
             const char *name = target->as.ident.name;
             if (op[0] != '=') {  /* += or -= */
                 Value cur;
@@ -410,6 +491,24 @@ static Value eval(Node *n, Env *env) {
             if (a.type != VAL_INT || b.type != VAL_INT)
                 runtime_error("range bounds must be integers");
             return v_range(a.as.integer, b.as.integer);
+        }
+        case NODE_LIST: {
+            AbyssList *l = list_new();
+            for (int i = 0; i < n->as.list.elements.count; i++)
+                list_push(l, eval(n->as.list.elements.items[i], env));
+            return v_list(l);
+        }
+        case NODE_INDEX: {
+            Value c = eval(n->as.index.collection, env);
+            Value i = eval(n->as.index.index, env);
+            if (c.type != VAL_LIST)
+                runtime_error("cannot index a non-list value");
+            if (i.type != VAL_INT)
+                runtime_error("list index must be an integer");
+            AbyssList *l = c.as.list;
+            if (i.as.integer < 0 || i.as.integer >= l->count)
+                runtime_error("list index out of range");
+            return l->items[i.as.integer];
         }
         case NODE_MATCH: {
             Value subject = eval(n->as.match.subject, env);
@@ -472,13 +571,23 @@ static ExecStatus exec(Node *n, Env *env, Value *ret) {
             return EXEC_NORMAL;
         case NODE_FOR: {
             Value it = eval(n->as.for_stmt.iterable, env);
-            if (it.type != VAL_RANGE)
-                runtime_error("'for ... in' currently requires a range (e.g. 0..10)");
-            for (long long k = it.as.range.start; k < it.as.range.end; k++) {
-                Env *scope = env_new(env);
-                env_define(scope, n->as.for_stmt.var_name, v_int(k));
-                if (exec(n->as.for_stmt.body, scope, ret) == EXEC_RETURN)
-                    return EXEC_RETURN;
+            if (it.type == VAL_RANGE) {
+                for (long long k = it.as.range.start; k < it.as.range.end; k++) {
+                    Env *scope = env_new(env);
+                    env_define(scope, n->as.for_stmt.var_name, v_int(k));
+                    if (exec(n->as.for_stmt.body, scope, ret) == EXEC_RETURN)
+                        return EXEC_RETURN;
+                }
+            } else if (it.type == VAL_LIST) {
+                AbyssList *l = it.as.list;
+                for (int k = 0; k < l->count; k++) {
+                    Env *scope = env_new(env);
+                    env_define(scope, n->as.for_stmt.var_name, l->items[k]);
+                    if (exec(n->as.for_stmt.body, scope, ret) == EXEC_RETURN)
+                        return EXEC_RETURN;
+                }
+            } else {
+                runtime_error("'for ... in' requires a range (e.g. 0..10) or a list");
             }
             return EXEC_NORMAL;
         }
@@ -496,6 +605,8 @@ static ExecStatus exec(Node *n, Env *env, Value *ret) {
 int interpret(Node *program) {
     g_global = env_new(NULL);
     env_define(g_global, "print", v_native(native_print));
+    env_define(g_global, "len", v_native(native_len));
+    env_define(g_global, "push", v_native(native_push));
 
     NodeList *decls = &program->as.program.declarations;
     for (int i = 0; i < decls->count; i++) {

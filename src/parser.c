@@ -135,6 +135,18 @@ static Node *parse_primary(Parser *p) {
             consume(p, TOK_RPAREN, "expected ')' after expression");
             return inner;
         }
+        case TOK_LBRACKET: {                       /* list literal: [a, b, c] */
+            Node *n = new_node(NODE_LIST, t.line);
+            advance(p);  /* consume '[' */
+            nodelist_init(&n->as.list.elements);
+            if (!check(p, TOK_RBRACKET)) {
+                do {
+                    nodelist_push(&n->as.list.elements, parse_expression(p));
+                } while (match_tok(p, TOK_COMMA));
+            }
+            consume(p, TOK_RBRACKET, "expected ']' to close list literal");
+            return n;
+        }
         case TOK_MATCH:
             return parse_match(p);
         default:
@@ -202,6 +214,12 @@ static Node *parse_postfix(Parser *p) {
             get->as.get.name = token_text(p->current);
             consume(p, TOK_IDENT, "expected property name after '.'");
             expr = get;
+        } else if (match_tok(p, TOK_LBRACKET)) {   /* subscript: collection[idx] */
+            Node *idx = new_node(NODE_INDEX, p->previous.line);
+            idx->as.index.collection = expr;
+            idx->as.index.index = parse_expression(p);
+            consume(p, TOK_RBRACKET, "expected ']' after index expression");
+            expr = idx;
         } else {
             break;
         }

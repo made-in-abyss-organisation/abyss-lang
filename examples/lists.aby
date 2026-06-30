@@ -1,0 +1,43 @@
+// Lists — the Phase 5b collection type.
+//
+// Demonstrates: list literals, indexing, element assignment, `len`, `push`,
+// iterating a list with `for ... in`, passing lists to functions, and nesting.
+// (Uses multi-argument `print` rather than `${}` interpolation so the emitted
+// C stays portable across every C11 compiler.)
+
+fn sum(xs: List) -> Int {
+    var total = 0
+    for x in xs {
+        total += x
+    }
+    return total
+}
+
+fn main() {
+    var nums = [10, 20, 30, 40]
+    print("nums       =", nums)
+    print("len(nums)  =", len(nums))
+    print("nums[0]    =", nums[0])
+    print("nums[3]    =", nums[3])
+
+    push(nums, 50)
+    print("after push =", nums)
+    print("new len    =", len(nums))
+
+    nums[1] = 99
+    print("after set  =", nums)
+
+    print("sum        =", sum(nums))
+
+    // build a list incrementally with a loop
+    var squares = []
+    for i in 0..6 {
+        push(squares, i * i)
+    }
+    print("squares    =", squares)
+
+    // lists nest
+    var grid = [[1, 2], [3, 4]]
+    print("grid       =", grid)
+    print("grid[1][0] =", grid[1][0])
+}

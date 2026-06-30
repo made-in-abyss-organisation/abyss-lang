@@ -122,6 +122,8 @@ Token lexer_next(Lexer *l) {
         case ')': return make_token(l, TOK_RPAREN);
         case '{': return make_token(l, TOK_LBRACE);
         case '}': return make_token(l, TOK_RBRACE);
+        case '[': return make_token(l, TOK_LBRACKET);
+        case ']': return make_token(l, TOK_RBRACKET);
         case ',': return make_token(l, TOK_COMMA);
         case ':': return make_token(l, TOK_COLON);
         case '.': return make_token(l, match(l, '.') ? TOK_DOTDOT : TOK_DOT);
@@ -177,6 +179,8 @@ const char *token_type_name(TokenType type) {
         case TOK_RPAREN: return "RPAREN";
         case TOK_LBRACE: return "LBRACE";
         case TOK_RBRACE: return "RBRACE";
+        case TOK_LBRACKET: return "LBRACKET";
+        case TOK_RBRACKET: return "RBRACKET";
         case TOK_COMMA: return "COMMA";
         case TOK_COLON: return "COLON";
         case TOK_DOT: return "DOT";

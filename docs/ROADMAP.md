@@ -12,7 +12,7 @@ you make it fast; make it fast before you make it pretty.*
 | 3 | **Type checker** | Static analysis: type inference, arg/field/return checks, Bool conditions — bad programs rejected with clear errors. ← *done (null-safety/immutability still TODO)* |
 | 4 | **Backend (transpile to C)** | Emit C, compile with cc/clang → native executable. ← *done: `abyssc --emit-c` + `make native`; ~370× faster than the interpreter on fib(32)* |
 | 5 | **Native types + benchmarks** | Type-directed codegen: emit native `long long`/`double`/`int` (not boxed `AV`) where types are known; benchmark suite vs Dart AOT. ← *done: matches hand-C, beats Dart-AOT ~2.3× on fib / ~1.1× on the integer loop (`make bench`)* |
-| 5b | **Runtime + stdlib** | ARC memory management, `String`/`List`/`Map`, async runtime. |
+| 5b | **Runtime + stdlib** | ARC memory management, `String`/`List`/`Map`, async runtime. ← *in progress: `List` landed — literals `[a, b, c]`, indexing/element-assignment, `len`/`push`, `for x in list`, nesting; lowered to both backends and differentially tested (`examples/lists.aby`). ARC / `Map` / async still TODO* |
 | 6 | **Mobile layer** | Bind Skia; widget framework; `state` → re-render. `Counter` runs on a real Android device. |
 | 7 | **Tooling** | Hot reload (<1s), error reporting, package manager, LSP. ← *CI on Linux/macOS/Windows + differential test harness done (`.github/workflows/ci.yml`, `tests/run_tests.py`); hot reload / LSP / package manager still TODO* |
 | 8 | **Platform & packaging** | Android (APK) first, then iOS (IPA, requires a Mac). ← *desktop delivery pipeline done: tagged releases build prebuilt `abyssc` binaries for macOS (universal), Windows (x64) & Linux (x64) (`.github/workflows/release.yml`); mobile APK/IPA still TODO* |

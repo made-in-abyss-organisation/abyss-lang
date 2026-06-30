@@ -17,6 +17,7 @@ typedef enum {
     /* punctuation */
     TOK_LPAREN, TOK_RPAREN,     /* ( )   */
     TOK_LBRACE, TOK_RBRACE,     /* { }   */
+    TOK_LBRACKET, TOK_RBRACKET, /* [ ]   */
     TOK_COMMA, TOK_COLON, TOK_DOT, TOK_DOTDOT,  /* . .. */
 
     /* operators */

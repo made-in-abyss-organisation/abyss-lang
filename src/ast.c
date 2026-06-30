@@ -141,6 +141,17 @@ static void print_node(Node *n, int depth) {
             print_node(n->as.range.start, depth + 1);
             print_node(n->as.range.end, depth + 1);
             break;
+        case NODE_LIST:
+            printf("List (%d element(s))\n", n->as.list.elements.count);
+            print_list(&n->as.list.elements, depth + 1);
+            break;
+        case NODE_INDEX:
+            printf("Index\n");
+            indent(depth + 1); printf("collection:\n");
+            print_node(n->as.index.collection, depth + 2);
+            indent(depth + 1); printf("index:\n");
+            print_node(n->as.index.index, depth + 2);
+            break;
         case NODE_MATCH:
             printf("Match\n");
             indent(depth + 1); printf("subject:\n");

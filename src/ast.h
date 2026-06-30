@@ -13,6 +13,8 @@ typedef enum {
     NODE_CALL,       /* callee(args...)                    */
     NODE_GET,        /* object.name  or  object?.name      */
     NODE_RANGE,      /* start .. end                       */
+    NODE_LIST,       /* [ a, b, c ]   list literal         */
+    NODE_INDEX,      /* collection[index]                  */
     NODE_MATCH,      /* match subject { arms }             */
     NODE_MATCH_ARM,  /* pattern -> body                    */
     /* declarations / statements */
@@ -65,6 +67,8 @@ struct Node {
         struct { Node *callee; NodeList args; } call;
         struct { Node *object; char *name; int safe; } get;  /* safe = ?. */
         struct { Node *start; Node *end; } range;
+        struct { NodeList elements; } list;                   /* [ a, b, c ]      */
+        struct { Node *collection; Node *index; } index;      /* collection[idx]  */
         struct { Node *subject; NodeList arms; } match;
         /* arm: kind 0=wildcard, 1=literal, 2=binding(name) */
         struct { int kind; Node *literal; char *bind; Node *body; } match_arm;

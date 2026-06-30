@@ -9,10 +9,17 @@ fuzzed (see the adversarial test pass); they agree on all tested programs
 
 - The C backend compiles functions, control flow, arithmetic, comparisons,
   `&&`/`||`/`??`, strings + `${}` interpolation, `print`, **`struct`s**
-  (construction, field read/write, and printing) and **`match`** (literal,
-  binding, and wildcard patterns). It now covers everything the interpreter
-  runs; the differential harness (`tests/run_tests.py`) checks that interpreter
-  and native output match, including `examples/features.aby`.
+  (construction, field read/write, and printing), **`match`** (literal,
+  binding, and wildcard patterns) and **`List`s** (literals, indexing,
+  element-assignment, `len`/`push`, `for`-iteration, and nesting). It covers
+  everything the interpreter runs; the differential harness
+  (`tests/run_tests.py`) checks that interpreter and native output match,
+  including `examples/features.aby` and `examples/lists.aby`.
+- **List element types are dynamic** in this release: list elements are stored
+  boxed (the tagged `AV` value) in both backends, so `xs[i]` is typed `Any` and
+  not yet a native scalar. Homogeneous unboxed lists (and `Map`) are a later
+  Phase-5b step. This is a performance note, not a correctness divergence — the
+  two backends still produce identical output.
 - UI constructs (`component` / `state` / `render`) parse but have no runtime in
   either backend yet (a later roadmap phase), so they do not execute to output.
 
