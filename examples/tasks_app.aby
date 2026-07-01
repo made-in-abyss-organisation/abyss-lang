@@ -1,0 +1,45 @@
+// tasks_app.aby — a slightly bigger app: a component whose state includes a
+// List, mutated by methods, re-rendered after each change. Exercises the whole
+// stack together — component/state/render, List state, a String-parameter
+// method (dispatched + unboxed in the native backend), push, state
+// reassignment, and List interpolation inside render.
+
+import "abyss/ui"
+
+component TaskList {
+    state items: List = []
+    state count: Int = 0
+
+    fn add(name: String) {
+        push(items, name)
+        count += 1
+    }
+
+    fn clear() {
+        items = []
+        count = 0
+    }
+
+    render {
+        Column(spacing: 8) {
+            Text("Tasks (${count})").bold()
+            Text("items: ${items}")
+        }
+    }
+}
+
+fn main() {
+    let app = TaskList()
+
+    app.add("write parser")
+    app.add("ship lists")
+    app.add("run on emulator")
+    print("== after adding 3 ==")
+    render(app)
+    print("items =", app.items)
+    print("count =", app.count)
+
+    app.clear()
+    print("== after clear ==")
+    render(app)
+}

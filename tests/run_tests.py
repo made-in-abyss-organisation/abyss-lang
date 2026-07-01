@@ -30,6 +30,7 @@ DIFFERENTIAL = [
     "examples/features.aby",
     "examples/lists.aby",
     "examples/counter_app.aby",
+    "examples/tasks_app.aby",
     "bench/fib.aby",
 ]
 # Native build+run only (too slow to interpret 100M iterations).
